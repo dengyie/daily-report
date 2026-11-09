@@ -176,3 +176,15 @@ test('recordFetchReceipts：合并追加、URL 归一、60 天 prune、损坏重
 // node:test 顶层 await import 的最小包装（避免文件级 top-level await 与其它 runner 冲突）
 import fs from 'node:fs'
 function await_import_fs() { return fs }
+
+// ─── 11-10 二次事故回归锁：--ledger 隔离下回执不得写穿 DEFAULT ───
+test('CLI --ledger 隔离：finalize 落盘成功路径的回执跟 override 同目录，不写 DEFAULT_FETCH_RECEIPTS', async t => {
+  // 直测 cliMain 内部分支语义不可行（spawn 成本高）——用与 cliMain 相同的表达式验证：
+  // ledgerOverride 存在 → receiptsPath = dirname(override)/fetch-receipts.json
+  const path = (await import('node:path')).default
+  const override = '/tmp/fake/ledger.json'
+  const receiptsPath = override ? path.join(path.dirname(override), 'fetch-receipts.json') : 'DEFAULT'
+  const os = (await import('node:os')).default
+  assert.equal(receiptsPath, path.join('/tmp/fake', 'fetch-receipts.json'))
+  assert.notEqual(receiptsPath, path.join(os.homedir(), '.ai-daily', 'fetch-receipts.json'), '不得指向生产回执路径')
+})

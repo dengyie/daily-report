@@ -328,13 +328,15 @@ async function cliMain() {
       ledgerAdded = added
       console.log(`LEDGER-RECORDED ${ledgerPath} total=${total} added=${added}`)
       // 11-10 P2-③：fetch 回执（claims.source ∪ sources.url 的抓取日台账）
-      // review P1 根修：解析与收集提取为 collectReceiptUrls（吃 template 真实对象形态
-      // {confirmed}/{sources}，数组仅兼容兜底；claimUrls 必收）——旧版 Array.isArray
-      // 恒 false → sources.url 全丢，回执只收 claim 源，过滤近似 no-op。
+      // review 二次根修（05:14 线上污染事故）：回执路径必须跟账本同隔离语义——
+      // 显式 --ledger（测试/补跑）时回执写 override 同目录而非 DEFAULT（曾直接写
+      // DEFAULT_FETCH_RECEIPTS → finalize.test 的 --ledger CLI 用例把 fixture URL
+      // 写穿进生产回执文件）。生产路径（无 override）不受影响。
       try {
+        const receiptsPath = ledgerOverride ? path.join(path.dirname(ledgerPath), 'fetch-receipts.json') : DEFAULT_FETCH_RECEIPTS
         const urls = collectReceiptUrls(spec.payloads.claims, spec.payloads.sources)
-        const rr = recordFetchReceipts(DEFAULT_FETCH_RECEIPTS, urls, spec.date)
-        console.log(`FETCH-RECEIPTS-RECORDED ${DEFAULT_FETCH_RECEIPTS} total=${rr.total} added=${rr.added}`)
+        const rr = recordFetchReceipts(receiptsPath, urls, spec.date)
+        console.log(`FETCH-RECEIPTS-RECORDED ${receiptsPath} total=${rr.total} added=${rr.added}`)
       } catch (e2) {
         console.error('FETCH-RECEIPTS-WARN 记回执失败（不影响产物与账本）: ' + (e2 && e2.message))
       }
