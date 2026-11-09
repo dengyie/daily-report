@@ -524,6 +524,31 @@ const computeBoardStates = (rows, boardKeys, recoveredKeys) => {
 // 静态兜底源（2026-08-26 新增）：discover 全失败 + harvest-fallback 仍空 → 注入精选一级/官方新闻页
 // URL（板块首页/官方 news 索引，常驻可抓）。found_via 标 'static-fallback'。仅代理面通道挂掉时兜底。
 // 约定：URL 常驻可靠更新、无登录墙、非 SEO/内容农场；索引页允许（fetch 后按窗口过滤）。
+// ─── 11-10 P2（AIHOT 借鉴 docs/selection.md §信源分级）：信源 tier ───
+// AIHOT：官方一手（T1）入选门槛 60、媒体/个人（T2）76——「官方原文更值得先看」。
+// 我们的 confirmed 已有对抗投票（真假门槛），tier 用于亮点/头条权重与 meta 可见性；
+// 席位拦截/排序等门槛动作等评测集（eval-synthesis）校准后启用——先落信息层：
+// confirmedOut 带 tier、report prompt 注入「官方一手优先亮点」、meta 计 t1/t2。
+// T1 = 官方一手域名清单（OFFICIAL_FEEDS/KNOWN_MAJOR_OUT/主流实验室与一手平台）；
+// T2 = 其余（媒体/社区/聚合）。纯清单维护，命中判定用 host 后缀（防 sub.host 误判）。
+const TIER1_HOSTS = new Set([
+  'openai.com', 'anthropic.com', 'x.ai', 'research.google', 'blog.google', 'deepmind.google',
+  'blogs.nvidia.com', 'nvidia.com', 'ai.meta.com', 'meta.ai', 'about.fb.com',
+  'api-docs.deepseek.com', 'deepseek.com', 'moonshotai.com', 'moonshot.cn', 'kimi.moonshot.cn',
+  'qwen.ai', 'qwenlm.ai', 'github.com', 'huggingface.co', 'arxiv.org', 'openreview.net',
+  'microsoft.com', 'apple.com', 'news.microsoft.com', 'amazon.science', 'deepmind.com',
+  'mistral.ai', 'cohere.com', 'x.ai', 'perplexity.ai', 'stability.ai', 'midjourney.com',
+])
+const sourceTier = url => {
+  try {
+    const host = String(url || '').replace(/^[a-z]+:\/\//i, '').split(/[/?#]/)[0].toLowerCase()
+    if (!host) return 'T2'
+    for (const t1 of TIER1_HOSTS) {
+      if (host === t1 || host.endsWith('.' + t1)) return 'T1'
+    }
+    return 'T2'
+  } catch { return 'T2' }
+}
 const STATIC_FALLBACK_SOURCES = [
   { board: 'labs',       url: 'https://www.anthropic.com/news',  title: 'Anthropic 官方 News' },
   { board: 'labs',       url: 'https://openai.com/news/',     title: 'OpenAI News' },
@@ -1245,6 +1270,74 @@ const isUncheckedStatus = s => {
   return n === '[窗口外·重大]' || n === '窗口外·重大' || n === '窗口外重大' || n === '未核查'
 }
 
+// ─── 11-10 P1（AIHOT 借鉴 docs/selection.md）：合成正文幻觉确定性校验 ───
+// AIHOT：「模型写出的名字或数字若不在条目里，这段话整段弃用」。我们的对应物：
+// report.items[].summary 是模型对已核查 claim 的改写——改写可能混入素材里不存在的
+// 实体名/数字（凭空原子）。对抗投票拦 claim 真假，拦不住改写走样（11-07 的
+// report_source_hallucination 只过滤 sources 数组引用，正文文本层此前无防线）。
+// 确定性防线（零模型裁判）：
+//   原子 = 拉丁实体词（≥4 字母、停用词外）+ 数字原子（≥3 位整数 / 含小数点 / 带百分号，
+//   与 AIHOT 口径一致；两位裸数字与日期不查，防误杀）。金标 = 整期 confirmed 的
+//   claim+quote+sourceUrl 全文原子集合（整期级语义：「不在条目里」）。
+//   item.summary 检出未命中原子 → summary 替换为其对应 claim 原文（sources URL 命中的
+//   第一条 confirmed）——不编造、不丢弃，与主系统 fillThinBullets「换正文不丢条目」
+//   同一哲学；无对应 claim（无 sources 或 URL 全不命中）→ 保留原文只计数（无可靠替换源）。
+// 旗标 `synth_body_hallucination:N`（引用过滤是 report_source_hallucination，互不覆盖）。
+// 注：①自含停用词表——build 顺序 render-md 先于 cluster，禁止 import clusterTokenize；
+//    ②本模块是纯函数域（无 log）——替换明细经返回值 samples 由 template 层落日志。
+const SYNTH_STOP = new Set(['news', 'note', 'report', 'model', 'models', 'open', 'new', 'blog', 'post', 'api', 'app', 'apps', 'ai', 'pro', 'free', 'beta', 'tool', 'tools', 'official', 'release', 'update', 'announce', 'launch', 'said', 'this', 'that', 'with', 'from', 'have', 'been', 'were', 'will', 'about', 'into', 'over', 'after', 'before', 'their', 'there', 'these', 'those', 'more', 'than', 'also', 'first', 'each', 'which', 'what', 'when', 'while', 'where', 'according', 'reported', 'claims', 'claim', 'version', 'based', 'using', 'used', 'uses', 'support', 'supports', 'including', 'include', 'includes', 'http', 'https', 'www', 'html', 'com', 'org', 'net'])
+const _stripDateShapes = s => String(s || '')
+  .replace(/https?:\/\/\S+/g, ' ')                 // URL 整体剥除（域名碎片不算实体）
+  .replace(/\d{4}-\d{1,2}-\d{1,2}/g, ' ')          // ISO 日期
+  .replace(/\d{4}\s*年(?:\s*\d{1,2}\s*月)?(?:\s*\d{1,2}\s*日)?/g, ' ')  // 2026年11月6日
+  .replace(/\d{1,2}\s*月\s*\d{1,2}\s*日/g, ' ')    // 11月6日
+const extractSynthAtoms = text => {
+  const clean = _stripDateShapes(text)
+  const atoms = new Set()
+  for (const m of clean.matchAll(/[A-Za-z][A-Za-z0-9&.-]{2,}/g)) {
+    const w = m[0].toLowerCase().replace(/[.&-]+$/, '')
+    if (w.length >= 4 && !SYNTH_STOP.has(w) && !/^\d+$/.test(w)) atoms.add(w)
+  }
+  for (const m of clean.matchAll(/\d[\d,]*(?:\.\d+)?%?/g)) {
+    const n = m[0].replace(/,/g, '')
+    if (n.includes('%') || n.includes('.') || n.replace(/[.%]/g, '').replace('%', '').length >= 3) atoms.add(n)
+  }
+  return atoms
+}
+const _goldAtomsOf = confirmed => {
+  const gold = new Set()
+  for (const c of confirmed || []) {
+    for (const t of [c.claim, c.quote, c.title, c.sourceUrl]) {
+      if (!t) continue
+      for (const a of extractSynthAtoms(t)) gold.add(a)
+    }
+  }
+  return gold
+}
+// 审计并原位修复 report（mutate items[].summary）。返回 { replaced, atoms, samples }。
+const auditReportBodies = (report, confirmed) => {
+  const res = { replaced: 0, atoms: 0, samples: [] }
+  if (!report || !Array.isArray(report.sections)) return res
+  const gold = _goldAtomsOf(confirmed)
+  if (!gold.size) return res
+  for (const sec of report.sections) {
+    for (const it of (sec && sec.items) || []) {
+      if (!it || typeof it.summary !== 'string' || !it.summary) continue
+      const miss = [...extractSynthAtoms(it.summary)].filter(a => !gold.has(a))
+      if (!miss.length) continue
+      res.atoms += miss.length
+      const claim = (confirmed || []).find(c => (it.sources || []).some(u => normURL(u) && normURL(u) === normURL(c.sourceUrl)))
+      if (claim && claim.claim) {
+        it.summary = claim.claim
+        res.replaced++
+        if (res.samples.length < 5) res.samples.push(String(it.title || '').slice(0, 40) + ' ← [' + miss.slice(0, 4).join(',') + ']')
+      }
+      // 无对应 claim：保留原文只计数（无可靠替换源，不编造 fallback）
+    }
+  }
+  return res
+}
+
 // 跨 section 唯一 URL 引用图：按「首次出现序」给每个唯一 URL 分配 1-based 编号（spec A.1）。
 // 非 URL 来源（如 (多源公认)）不参与编号——正文不挂角标、不进参考列表。
 // 10-05 P3 诚实标注：fetchedUrls（抓取期真实访问过的 URL 集合，normURL 对比）之外的是发现期
@@ -1762,6 +1855,48 @@ const mergeCluster = (items, dateLabel, majorOutMap) => {
   const summary = honestMergeSummary(distinct)
   const out = { ...distinct[0], claim: key, summary, sources, ...(vote ? { status: vote } : {}), mergedCount: total }
   return out
+}
+
+// ─── 11-10 P2（AIHOT 借鉴 docs/grouping.md）：事件热度 = 独立来源计数 × 24h 半衰 ───
+// AIHOT：48h 窗口内每个独立来源只计一次（防一稿多发自刷），24h 衰减一半——按事件算热度
+// 不按文章算。我们的对应物：cluster 的独立域名集合（sources ∪ sourceUrl 的 host 去重）
+// × 0.5^(ageHours/24)，age 取簇内最新 claim 的 publishDate|date 到报告日。解析失败 →
+// 当日内（age=0，不衰减，保守取高）。纯函数，编排层调用后注入 prompt/meta（11-10 起
+// 头条选择锚定热度：prompt 注入「热度降序」，完全规则化头条等 eval-synthesis 校准后启用）。
+const _hostOf = u => {
+  try { return String(u || '').replace(/^[a-z]+:\/\//i, '').split(/[/?#]/)[0].replace(/^www\./, '').toLowerCase() } catch { return '' }
+}
+const computeClusterHeat = (cluster, today) => {
+  if (!cluster || !Array.isArray(cluster.items)) return 0
+  const hosts = new Set()
+  let newest = 0 // 簇内最新声明时间（epoch ms）
+  for (const c of cluster.items) {
+    for (const u of [...(c.sources || []), c.sourceUrl]) {
+      const h = _hostOf(u)
+      if (h) hosts.add(h)
+    }
+    const t = Date.parse(c.publishDate || c.date || '')
+    if (Number.isFinite(t) && t > newest) newest = t
+  }
+  if (!hosts.size) return 0
+  let ageHours = 0
+  const todayMs = Date.parse(today || '')
+  if (Number.isFinite(todayMs) && newest > 0) {
+    ageHours = Math.max(0, (todayMs - newest) / 3600000)
+  }
+  return +(hosts.size * Math.pow(0.5, ageHours / 24)).toFixed(2)
+}
+
+// ─── 11-10 P3（AIHOT 借鉴 docs/grouping.md §关系四分类）：ROUNDUP（汇总稿）识别 ───
+// AIHOT 两两关系含 ROUNDUP（一方为多话题汇总）——汇总稿不得作为独立来源计数、不得
+// 冒充事件。模型两两判断是他们的形态；我们 v1 用确定性规则（零模型成本，等评测集后
+// 再上模型判断）：标题/claim 命中汇总词表即判 ROUNDUP。
+// 动作（template 接线）：roundup 簇 heat × 0.3（退出头条候选），meta 计 roundup_clusters。
+const ROUNDUP_RE = /round-?ups?\b|weekly\s+(?:digest|recap|roundup|news)|news\s+digest|digest\b|汇总|盘点|一周要闻|本周回顾|本周汇总|多家媒体|数家媒体|series of (?:announcements|launches)/i
+const isRoundupCluster = cluster => {
+  if (!cluster || !Array.isArray(cluster.items)) return false
+  const text = cluster.items.map(c => `${c.title || ''} ${c.claim || ''}`).join(' ')
+  return ROUNDUP_RE.test(text)
 }
 	// ─── inline: ledger ───
 // ai-daily 跨天已报道账本（9/13 重构新增）——治理「同一事件连续多天整条重复成稿」的 P0 缺口。
@@ -2663,6 +2798,41 @@ if (REPORTED_LEDGER) {
 	  log('LEDGER-SKIP 无 args.reportedLedger（首跑或编排器未注入账本）→ 本轮跨天去重关闭')
 	}
 
+	// ─── 11-10 P2-③（AIHOT 借鉴 §回执）：fetch 回执过滤 ───
+	// 48h 内已抓过的 URL 不再占 MAX_FETCH 配额——内容 48h 内不会变，重抓是纯时间浪费；
+	// 名额让给没抓过的候选（fetch_budget_dropped 的痛点正是「发现的比配额多」）。
+	// args.fetchReceipts = { [normURL]: 'YYYY-MM-DD' }，编排器一次性副本注入（同账本机制，
+	// 主文件路径不进 prompt）。无注入 → 过滤关闭（首跑/fail-open）。
+	const FETCH_RECEIPTS = (() => {
+		const r = args.fetchReceipts
+		if (!r || typeof r !== 'object' || Array.isArray(r)) return null
+		const ok = {}
+		for (const [k, v] of Object.entries(r)) {
+			if (typeof k === 'string' && k && typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) ok[k] = v
+		}
+		return Object.keys(ok).length ? ok : null
+	})()
+	let receiptsReused = 0
+	if (FETCH_RECEIPTS) {
+		for (const [board, urls] of [...boardURLMap.entries()]) {
+			const remain = []
+			for (const t of urls) {
+				const nu = normURL(t.url)
+				const lastDay = nu ? FETCH_RECEIPTS[nu] : null
+				let reuse = false
+				if (lastDay) {
+					const ed = normalizeDate(lastDay), td = normalizeDate(DATE)
+					const age = (ed != null && td != null) ? daysBetween(ed, td) : 999
+					if (age >= 0 && age <= 2) reuse = true
+				}
+				if (reuse) { receiptsReused++; continue }
+				remain.push(t)
+			}
+			boardURLMap.set(board, remain)
+		}
+		if (receiptsReused) log('FETCH-RECEIPT-FILTER 48h 内已抓候选跳过 ' + receiptsReused + ' 条（名额让给新 URL）')
+	}
+
 	// 9/20：linuxdo-cdp snippet 直铸必须在 allocateFetchBudget **之前**。
 	// 09-20 实证：mint 在配额后 → 8 席 linuxdo-cdp 先占满 MAX_FETCH，官方/一手源整板被 budgetDropped。
 	// mint 只计入 LINUXDO_MAX_SOURCES；铸出的 URL 从 boardURLMap 剔除，不占 MAX_FETCH。
@@ -3059,6 +3229,21 @@ log('majorOut: ' + majorOutClaims.length + ' industry milestones injected into c
 // 不传 clustered 给 ctxP——report prompt 输入契约（reportBody/refutedList/unverifiedList/missBlock/coverBlock）不变。
 const clustered = clusterClaims(confirmed)
 const clusteredMerged = clustered.filter(cl => cl.items.length > 1).map(cl => mergeCluster(cl.items, DATE, null))
+// 11-10 P2/P3（AIHOT 借鉴 docs/grouping.md）：事件热度（独立源计数 × 24h 半衰）+ ROUNDUP 汇总稿识别。
+// 热度对全部簇计算（单条大新闻也该有热度）；roundup 簇 ×0.3 退出头条候选。v1 注入 prompt 锚定
+// 「头条/亮点按热度降序」；完全规则化头条等 eval-synthesis 校准后启用。meta 记 roundup_clusters。
+const clusterHeatRows = clustered.map(cl => {
+	const base = computeClusterHeat(cl, DATE)
+	const roundup = isRoundupCluster(cl)
+	return { key: cl.key, heat: +(base * (roundup ? 0.3 : 1)).toFixed(2), roundup, n: cl.items.length }
+}).sort((a, b) => b.heat - a.heat)
+const roundupClusters = clusterHeatRows.filter(r => r.roundup).length
+if (roundupClusters) log('ROUNDUP-CLUSTERS 汇总稿簇 ' + roundupClusters + ' 个（heat ×0.3，退出头条候选）')
+const heatBlock = clusterHeatRows.length
+	? '\n## 事件热度（独立来源计数 × 24h 半衰；[汇总稿] 已折价不宜作头条）\n' +
+		clusterHeatRows.slice(0, 8).map((r, i) => (i + 1) + '. [heat ' + r.heat + ']' + (r.roundup ? '[汇总稿]' : '') + ' ' + String(r.key || '').split('\n').join(' / ').slice(0, 80)).join('\n') +
+		'\n（今日亮点/头条优先按热度降序选；官方一手（T1）来源条目优先上亮点。热度相同才按内容重要性判断。）'
+	: ''
 const clusteredBlock = clusteredMerged.length
   ? '## 已聚类（cluster 合并 ' + clusteredMerged.reduce((n, c) => n + c.mergedCount, 0) + ' 条→主视图）\n' + clusteredMerged.map((c, i) =>
       '\n[已聚类·' + (i + 1) + '] [cluster 已合并 ' + c.mergedCount + ' 条] ' + c.claim.split('\n').join(' / ') + '\n' +
@@ -3177,7 +3362,8 @@ const reportBody = (confirmed.length ? confirmed.map((c, i) =>
 // 仅当确认声明确有跨条可并簇项时出现；被合并 item 仍保留在 confirmed 原样（本块只做主视图提示，不删数据）。
 // 8/23 分支合并复核修复：外层只拼「原始素材」分节头（由 reportPrompt/prompts.mjs 唯一提供），此处不再重复注入——
 // clusteredBlock 自带「已聚类」头，拼接只接 \n\n 与 reportBody，避免 report 代理收到两个同名 H2。
-const reportBodyWithCluster = clusteredBlock ? clusteredBlock + '\n\n' + reportBody : reportBody
+const _clusterBlocks = [clusteredBlock, heatBlock].filter(Boolean).join('\n\n')
+const reportBodyWithCluster = _clusterBlocks ? _clusterBlocks + '\n\n' + reportBody : reportBody
 const refutedList = killed.map(c => '- "' + c.claim + '" — ' + c.sourceUrl)
 const unverifiedList = unverified.map(c => '- "' + c.claim + '" — ' + c.sourceUrl)
 const coverBlock = coverage.map(c => '- ' + c.title + ': ' + c.claims + ' claims / ' + c.urls + ' sources' + (c.recovered ? ' [recovered]' : (c.degraded ? ' [degraded]' : '')) + (c.companiesChecked
@@ -3229,6 +3415,17 @@ if (report && Array.isArray(report.sections)) {
   if (reportSourceHallucinated) log('REPORT-SOURCE-FILTER 幻觉引用丢弃 ' + reportSourceHallucinated + ' 条（不在 confirmed sourceUrl 集合内）')
 }
 
+// ─── 11-10 P1（AIHOT 借鉴 docs/selection.md）：合成正文幻觉确定性校验 ───
+// summary 是模型对已核查 claim 的改写——凭空实体/数字原子（拉丁词、≥3 位数字、
+// 百分比/小数）回查整期 confirmed 金标（claim+quote+sourceUrl），未命中 → summary
+// 替换为对应 claim 原文（不编造、不丢弃）。旗标 synth_body_hallucination:N。
+let synthBodyHallucinated = 0
+if (report) {
+	const _audit = auditReportBodies(report, confirmed)
+	synthBodyHallucinated = _audit.replaced
+	if (_audit.atoms > 0) log('SYNTH-BODY-AUDIT 幻觉原子 ' + _audit.atoms + ' 个 / 替换 ' + _audit.replaced + ' 条 summary' + (_audit.samples.length ? '：' + _audit.samples.join('；') : ''))
+}
+
 // ─── md 确定性渲染（report 成功 → 完整版；失败 → 降级版）。render-md.mjs，不再有 mdWriter 代理。───
 // report 成功 → md 必然成功（纯字符串拼接），md 产出不再受网关波动影响。
 const degradedFlags = []
@@ -3252,6 +3449,7 @@ if (indexClaimDroppedTotal > 0) degradedFlags.push('index_claim_dropped:' + inde
 if (externalStats.unavailable > 0) degradedFlags.push('external_check_unavailable:' + externalStats.unavailable)
 // 9/19 烟测实证：report 幻觉引用被确定性过滤的计数必须可见。
 if (reportSourceHallucinated > 0) degradedFlags.push('report_source_hallucination:' + reportSourceHallucinated)
+if (synthBodyHallucinated > 0) degradedFlags.push('synth_body_hallucination:' + synthBodyHallucinated)
 // 9/13 跨天账本：无账本 → 跨天去重本轮关闭，如实上报（fail-open 不阻断成稿）。
 if (!REPORTED_LEDGER) degradedFlags.push('ledger_unavailable')
 // 9/01 方案 D：合成入口与总墙钟脱钩后，reportErr 只剩「代理真失败」一条路径
@@ -3261,7 +3459,7 @@ if (reportErr) degradedFlags.push('report_failed')
 const generatedBy = 'ai-daily (' + reportModelUsed + ')'
 // 归档 payload 数组（claimsJson 与降级 md 共用同一份同构数据，避免两处映射漂移）。
 // 9/19 F12：major-out 未投票，confidence 置 null——旧版硬给 'high'，JSON 归档与正文「未核查措辞」口径漂移。
-const confirmedOut = confirmed.map(c => ({ claim: c.claim, quote: c.quote, source: c.sourceUrl, sourceQuality: c.sourceQuality, date: c.publishDate || c.date, window: c.isMajorOut ? 'major-out' : claimWindow(c), vote: c.isMajorOut ? '—' : (c.verdicts.length - c.refutedCount) + '-' + c.refutedCount, verifiedByVote: !c.isMajorOut, erroredCount: c.erroredCount || 0, externalCheck: c.externalCheck || null, confidence: (c.verdicts.filter(v => !v.refuted)[0] || {}).confidence || (c.isMajorOut ? null : 'low') }))
+const confirmedOut = confirmed.map(c => ({ claim: c.claim, quote: c.quote, source: c.sourceUrl, sourceQuality: c.sourceQuality, date: c.publishDate || c.date, window: c.isMajorOut ? 'major-out' : claimWindow(c), vote: c.isMajorOut ? '—' : (c.verdicts.length - c.refutedCount) + '-' + c.refutedCount, verifiedByVote: !c.isMajorOut, erroredCount: c.erroredCount || 0, externalCheck: c.externalCheck || null, confidence: (c.verdicts.filter(v => !v.refuted)[0] || {}).confidence || (c.isMajorOut ? null : 'low'), tier: sourceTier(c.sourceUrl) }))
 // 10-05 P3：参考来源「未抓取」标注的数据面——抓取期真实访问过的 URL 全集（来源页 url +
 // 索引页提取的真实文章 claimUrl）。集合之外进参考来源的编号是发现期提供、从未抓取验证的链接。
 const _fetchedUrlSet = new Set()
@@ -3279,7 +3477,11 @@ const md = report
       // claims_extracted=全部提取声明；topic_groups=跨条合并话题组；included=纳入正文的条目数。
       stats: { confirmed: confirmed.length, major_out: majorOutClaims.length, killed: killed.length, urls_fetched: sources.length, urls_discovered: discoverRows.reduce((n, d) => n + d.urls.length, 0),
         community_topics: discoverRows.reduce((n, d) => n + (d.linuxdoTopics || 0), 0), claims_extracted: allClaims.length,
-        topic_groups: clusteredMerged.length, included: report.sections ? report.sections.reduce((n, s) => n + ((s && s.items) || []).length, 0) : 0 },
+        topic_groups: clusteredMerged.length, included: report.sections ? report.sections.reduce((n, s) => n + ((s && s.items) || []).length, 0) : 0,
+        // 11-10 AIHOT 借鉴（tier/热度/回执/幻觉审计可见性）：
+        t1_sources: confirmedOut.filter(c => c.tier === 'T1').length, t2_sources: confirmedOut.filter(c => c.tier === 'T2').length,
+        roundup_clusters: roundupClusters, top_heat: clusterHeatRows.length ? clusterHeatRows[0].heat : 0,
+        fetch_receipts_reused: receiptsReused, synth_body_hallucination: synthBodyHallucinated },
       generated_by: generatedBy,
     } })
   : renderDegradedMarkdown({ date: DATE, window: WINDOW_LABEL, confirmed: confirmedOut, refuted: refutedOut, coverage, windowMisses, degraded: degradedFlags, noNewsCompanies: noDynamicCompanies, reportError: reportErr, generated_by: generatedBy })

@@ -145,3 +145,45 @@ export const mergeCluster = (items, dateLabel, majorOutMap) => {
   const out = { ...distinct[0], claim: key, summary, sources, ...(vote ? { status: vote } : {}), mergedCount: total }
   return out
 }
+
+// ─── 11-10 P2（AIHOT 借鉴 docs/grouping.md）：事件热度 = 独立来源计数 × 24h 半衰 ───
+// AIHOT：48h 窗口内每个独立来源只计一次（防一稿多发自刷），24h 衰减一半——按事件算热度
+// 不按文章算。我们的对应物：cluster 的独立域名集合（sources ∪ sourceUrl 的 host 去重）
+// × 0.5^(ageHours/24)，age 取簇内最新 claim 的 publishDate|date 到报告日。解析失败 →
+// 当日内（age=0，不衰减，保守取高）。纯函数，编排层调用后注入 prompt/meta（11-10 起
+// 头条选择锚定热度：prompt 注入「热度降序」，完全规则化头条等 eval-synthesis 校准后启用）。
+const _hostOf = u => {
+  try { return String(u || '').replace(/^[a-z]+:\/\//i, '').split(/[/?#]/)[0].replace(/^www\./, '').toLowerCase() } catch { return '' }
+}
+export const computeClusterHeat = (cluster, today) => {
+  if (!cluster || !Array.isArray(cluster.items)) return 0
+  const hosts = new Set()
+  let newest = 0 // 簇内最新声明时间（epoch ms）
+  for (const c of cluster.items) {
+    for (const u of [...(c.sources || []), c.sourceUrl]) {
+      const h = _hostOf(u)
+      if (h) hosts.add(h)
+    }
+    const t = Date.parse(c.publishDate || c.date || '')
+    if (Number.isFinite(t) && t > newest) newest = t
+  }
+  if (!hosts.size) return 0
+  let ageHours = 0
+  const todayMs = Date.parse(today || '')
+  if (Number.isFinite(todayMs) && newest > 0) {
+    ageHours = Math.max(0, (todayMs - newest) / 3600000)
+  }
+  return +(hosts.size * Math.pow(0.5, ageHours / 24)).toFixed(2)
+}
+
+// ─── 11-10 P3（AIHOT 借鉴 docs/grouping.md §关系四分类）：ROUNDUP（汇总稿）识别 ───
+// AIHOT 两两关系含 ROUNDUP（一方为多话题汇总）——汇总稿不得作为独立来源计数、不得
+// 冒充事件。模型两两判断是他们的形态；我们 v1 用确定性规则（零模型成本，等评测集后
+// 再上模型判断）：标题/claim 命中汇总词表即判 ROUNDUP。
+// 动作（template 接线）：roundup 簇 heat × 0.3（退出头条候选），meta 计 roundup_clusters。
+export const ROUNDUP_RE = /round-?ups?\b|weekly\s+(?:digest|recap|roundup|news)|news\s+digest|digest\b|汇总|盘点|一周要闻|本周回顾|本周汇总|多家媒体|数家媒体|series of (?:announcements|launches)/i
+export const isRoundupCluster = cluster => {
+  if (!cluster || !Array.isArray(cluster.items)) return false
+  const text = cluster.items.map(c => `${c.title || ''} ${c.claim || ''}`).join(' ')
+  return ROUNDUP_RE.test(text)
+}

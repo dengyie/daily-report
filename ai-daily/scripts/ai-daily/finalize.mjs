@@ -112,6 +112,40 @@ export const ledgerEntriesFromClaims = (claimsJson, date) => {
     .map(c => makeLedgerEntry(date, c.source || '', c.claim || '', c.window === 'major-out'))
 }
 
+// ─── 11-10 P2-③（AIHOT 借鉴 §回执机制）：fetch 回执落盘 ───
+// url → 最后抓取日（YYYY-MM-DD）。下次 run 经编排器一次性副本注入 args.fetchReceipts，
+// fetch 候选过滤把 48h 内已抓的 URL 让位给新 URL（重复抓旧 URL 是纯时间浪费：内容没变，
+// 昨天抓过且未报道的今天重抓产出趋零）。60 天 prune（与账本 LEDGER_KEEP_DAYS 同期）。
+// tmp+rename 原子写，损坏即重建（回执是纯优化态，fail-open 零风险面）。
+export const DEFAULT_FETCH_RECEIPTS = path.join(os.homedir(), '.ai-daily', 'fetch-receipts.json')
+export const recordFetchReceipts = (receiptsPath, urls, date) => {
+  let existing = {}
+  if (fs.existsSync(receiptsPath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(receiptsPath, 'utf8'))
+      if (raw && typeof raw === 'object' && !Array.isArray(raw)) existing = raw
+    } catch { /* 损坏即重建 */ }
+  }
+  let added = 0
+  for (const u of urls || []) {
+    const nu = normURL(u)
+    if (!nu) continue
+    if (!existing[nu]) added++
+    existing[nu] = date
+  }
+  const todayMs = Date.parse(date)
+  if (Number.isFinite(todayMs)) {
+    for (const k of Object.keys(existing)) {
+      const t = Date.parse(existing[k])
+      if (Number.isFinite(t) && (todayMs - t) / 86400000 > 60) delete existing[k]
+    }
+  }
+  const tmp = receiptsPath + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(existing))
+  fs.renameSync(tmp, receiptsPath)
+  return { total: Object.keys(existing).length, added }
+}
+
 /**
  * 合并追加账本并原子写盘。去重 key = normURL(url) | '|' | tokens 排序串（同 URL 多 claim 保留各自指纹）。
  * @returns {{ ledgerPath: string, total: number, added: number }}
@@ -276,6 +310,18 @@ async function cliMain() {
       ledgerStatus = 'recorded'
       ledgerAdded = added
       console.log(`LEDGER-RECORDED ${ledgerPath} total=${total} added=${added}`)
+      // 11-10 P2-③：fetch 回执（claims.source ∪ sources.url 的抓取日台账）
+      try {
+        const cl = JSON.parse(spec.payloads.claims || '[]')
+        const src = JSON.parse(spec.payloads.sources || '[]')
+        const urls = new Set()
+        for (const c of (Array.isArray(cl) ? cl : (cl && cl.confirmed) || [])) { if (c && c.source) urls.add(c.source) }
+        for (const s of (Array.isArray(src) ? src : [])) { if (s && s.url) urls.add(s.url) }
+        const rr = recordFetchReceipts(DEFAULT_FETCH_RECEIPTS, [...urls], spec.date)
+        console.log(`FETCH-RECEIPTS-RECORDED ${DEFAULT_FETCH_RECEIPTS} total=${rr.total} added=${rr.added}`)
+      } catch (e2) {
+        console.error('FETCH-RECEIPTS-WARN 记回执失败（不影响产物与账本）: ' + (e2 && e2.message))
+      }
     } catch (e) {
       ledgerStatus = 'failed'
       console.error(`LEDGER-WARN 记账失败（产物已落盘不受影响）: ${e && e.message}`)

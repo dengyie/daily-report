@@ -153,6 +153,31 @@ import { normURL } from './date-utils.mjs'
 // 静态兜底源（2026-08-26 新增）：discover 全失败 + harvest-fallback 仍空 → 注入精选一级/官方新闻页
 // URL（板块首页/官方 news 索引，常驻可抓）。found_via 标 'static-fallback'。仅代理面通道挂掉时兜底。
 // 约定：URL 常驻可靠更新、无登录墙、非 SEO/内容农场；索引页允许（fetch 后按窗口过滤）。
+// ─── 11-10 P2（AIHOT 借鉴 docs/selection.md §信源分级）：信源 tier ───
+// AIHOT：官方一手（T1）入选门槛 60、媒体/个人（T2）76——「官方原文更值得先看」。
+// 我们的 confirmed 已有对抗投票（真假门槛），tier 用于亮点/头条权重与 meta 可见性；
+// 席位拦截/排序等门槛动作等评测集（eval-synthesis）校准后启用——先落信息层：
+// confirmedOut 带 tier、report prompt 注入「官方一手优先亮点」、meta 计 t1/t2。
+// T1 = 官方一手域名清单（OFFICIAL_FEEDS/KNOWN_MAJOR_OUT/主流实验室与一手平台）；
+// T2 = 其余（媒体/社区/聚合）。纯清单维护，命中判定用 host 后缀（防 sub.host 误判）。
+export const TIER1_HOSTS = new Set([
+  'openai.com', 'anthropic.com', 'x.ai', 'research.google', 'blog.google', 'deepmind.google',
+  'blogs.nvidia.com', 'nvidia.com', 'ai.meta.com', 'meta.ai', 'about.fb.com',
+  'api-docs.deepseek.com', 'deepseek.com', 'moonshotai.com', 'moonshot.cn', 'kimi.moonshot.cn',
+  'qwen.ai', 'qwenlm.ai', 'github.com', 'huggingface.co', 'arxiv.org', 'openreview.net',
+  'microsoft.com', 'apple.com', 'news.microsoft.com', 'amazon.science', 'deepmind.com',
+  'mistral.ai', 'cohere.com', 'x.ai', 'perplexity.ai', 'stability.ai', 'midjourney.com',
+])
+export const sourceTier = url => {
+  try {
+    const host = String(url || '').replace(/^[a-z]+:\/\//i, '').split(/[/?#]/)[0].toLowerCase()
+    if (!host) return 'T2'
+    for (const t1 of TIER1_HOSTS) {
+      if (host === t1 || host.endsWith('.' + t1)) return 'T1'
+    }
+    return 'T2'
+  } catch { return 'T2' }
+}
 export const STATIC_FALLBACK_SOURCES = [
   { board: 'labs',       url: 'https://www.anthropic.com/news',  title: 'Anthropic 官方 News' },
   { board: 'labs',       url: 'https://openai.com/news/',     title: 'OpenAI News' },

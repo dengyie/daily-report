@@ -38,6 +38,74 @@ const isUncheckedStatus = s => {
   return n === '[窗口外·重大]' || n === '窗口外·重大' || n === '窗口外重大' || n === '未核查'
 }
 
+// ─── 11-10 P1（AIHOT 借鉴 docs/selection.md）：合成正文幻觉确定性校验 ───
+// AIHOT：「模型写出的名字或数字若不在条目里，这段话整段弃用」。我们的对应物：
+// report.items[].summary 是模型对已核查 claim 的改写——改写可能混入素材里不存在的
+// 实体名/数字（凭空原子）。对抗投票拦 claim 真假，拦不住改写走样（11-07 的
+// report_source_hallucination 只过滤 sources 数组引用，正文文本层此前无防线）。
+// 确定性防线（零模型裁判）：
+//   原子 = 拉丁实体词（≥4 字母、停用词外）+ 数字原子（≥3 位整数 / 含小数点 / 带百分号，
+//   与 AIHOT 口径一致；两位裸数字与日期不查，防误杀）。金标 = 整期 confirmed 的
+//   claim+quote+sourceUrl 全文原子集合（整期级语义：「不在条目里」）。
+//   item.summary 检出未命中原子 → summary 替换为其对应 claim 原文（sources URL 命中的
+//   第一条 confirmed）——不编造、不丢弃，与主系统 fillThinBullets「换正文不丢条目」
+//   同一哲学；无对应 claim（无 sources 或 URL 全不命中）→ 保留原文只计数（无可靠替换源）。
+// 旗标 `synth_body_hallucination:N`（引用过滤是 report_source_hallucination，互不覆盖）。
+// 注：①自含停用词表——build 顺序 render-md 先于 cluster，禁止 import clusterTokenize；
+//    ②本模块是纯函数域（无 log）——替换明细经返回值 samples 由 template 层落日志。
+const SYNTH_STOP = new Set(['news', 'note', 'report', 'model', 'models', 'open', 'new', 'blog', 'post', 'api', 'app', 'apps', 'ai', 'pro', 'free', 'beta', 'tool', 'tools', 'official', 'release', 'update', 'announce', 'launch', 'said', 'this', 'that', 'with', 'from', 'have', 'been', 'were', 'will', 'about', 'into', 'over', 'after', 'before', 'their', 'there', 'these', 'those', 'more', 'than', 'also', 'first', 'each', 'which', 'what', 'when', 'while', 'where', 'according', 'reported', 'claims', 'claim', 'version', 'based', 'using', 'used', 'uses', 'support', 'supports', 'including', 'include', 'includes', 'http', 'https', 'www', 'html', 'com', 'org', 'net'])
+const _stripDateShapes = s => String(s || '')
+  .replace(/https?:\/\/\S+/g, ' ')                 // URL 整体剥除（域名碎片不算实体）
+  .replace(/\d{4}-\d{1,2}-\d{1,2}/g, ' ')          // ISO 日期
+  .replace(/\d{4}\s*年(?:\s*\d{1,2}\s*月)?(?:\s*\d{1,2}\s*日)?/g, ' ')  // 2026年11月6日
+  .replace(/\d{1,2}\s*月\s*\d{1,2}\s*日/g, ' ')    // 11月6日
+export const extractSynthAtoms = text => {
+  const clean = _stripDateShapes(text)
+  const atoms = new Set()
+  for (const m of clean.matchAll(/[A-Za-z][A-Za-z0-9&.-]{2,}/g)) {
+    const w = m[0].toLowerCase().replace(/[.&-]+$/, '')
+    if (w.length >= 4 && !SYNTH_STOP.has(w) && !/^\d+$/.test(w)) atoms.add(w)
+  }
+  for (const m of clean.matchAll(/\d[\d,]*(?:\.\d+)?%?/g)) {
+    const n = m[0].replace(/,/g, '')
+    if (n.includes('%') || n.includes('.') || n.replace(/[.%]/g, '').replace('%', '').length >= 3) atoms.add(n)
+  }
+  return atoms
+}
+const _goldAtomsOf = confirmed => {
+  const gold = new Set()
+  for (const c of confirmed || []) {
+    for (const t of [c.claim, c.quote, c.title, c.sourceUrl]) {
+      if (!t) continue
+      for (const a of extractSynthAtoms(t)) gold.add(a)
+    }
+  }
+  return gold
+}
+// 审计并原位修复 report（mutate items[].summary）。返回 { replaced, atoms, samples }。
+export const auditReportBodies = (report, confirmed) => {
+  const res = { replaced: 0, atoms: 0, samples: [] }
+  if (!report || !Array.isArray(report.sections)) return res
+  const gold = _goldAtomsOf(confirmed)
+  if (!gold.size) return res
+  for (const sec of report.sections) {
+    for (const it of (sec && sec.items) || []) {
+      if (!it || typeof it.summary !== 'string' || !it.summary) continue
+      const miss = [...extractSynthAtoms(it.summary)].filter(a => !gold.has(a))
+      if (!miss.length) continue
+      res.atoms += miss.length
+      const claim = (confirmed || []).find(c => (it.sources || []).some(u => normURL(u) && normURL(u) === normURL(c.sourceUrl)))
+      if (claim && claim.claim) {
+        it.summary = claim.claim
+        res.replaced++
+        if (res.samples.length < 5) res.samples.push(String(it.title || '').slice(0, 40) + ' ← [' + miss.slice(0, 4).join(',') + ']')
+      }
+      // 无对应 claim：保留原文只计数（无可靠替换源，不编造 fallback）
+    }
+  }
+  return res
+}
+
 // 跨 section 唯一 URL 引用图：按「首次出现序」给每个唯一 URL 分配 1-based 编号（spec A.1）。
 // 非 URL 来源（如 (多源公认)）不参与编号——正文不挂角标、不进参考列表。
 // 10-05 P3 诚实标注：fetchedUrls（抓取期真实访问过的 URL 集合，normURL 对比）之外的是发现期
