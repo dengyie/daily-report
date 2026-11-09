@@ -96,6 +96,36 @@ test('isRoundupCluster：汇总词命中为真，普通事件为假', () => {
 
 // ─── 11-10 P2-③（AIHOT 借鉴）：fetch 回执 ───
 
+import { parseFetchReceipts, receiptFilter } from '../ledger.mjs'
+
+test('parseFetchReceipts：合法对象通过，非对象/数组/脏值过滤，全脏→null', () => {
+  assert.deepEqual(parseFetchReceipts({ 'a.com': '2026-11-09', 'bad.com': 'nope' }), { 'a.com': '2026-11-09' })
+  assert.equal(parseFetchReceipts(null), null)
+  assert.equal(parseFetchReceipts([['a', 'b']]), null)
+  assert.equal(parseFetchReceipts({ x: 123 }), null)  // 非字符串值全滤→空
+})
+
+test('receiptFilter：static-fallback 豁免必重抓（review 根修①），age<=1 复用、age>=2 重抓（根修②）', () => {
+  const receipts = { 'a.com/x': '2026-11-09', 'b.com/y': '2026-11-08', 'c.com/z': '2026-11-10' }
+  const targets = [
+    { url: 'https://a.com/x' },                              // 昨天抓过 → 复用
+    { url: 'https://b.com/y' },                              // 前天抓过 → 重抓（原 age<=2 会误复用 ~72h）
+    { url: 'https://c.com/z' },                              // 今天抓过 → 复用
+    { url: 'https://static.com/idx', found_via: 'static-fallback' },  // 昨天抓过也必重抓
+    { url: 'https://d.com/new' },                            // 没抓过 → 保留
+  ]
+  const { keep, reused } = receiptFilter(targets, receipts, '2026-11-10')
+  assert.equal(reused, 2, 'a.com 与 c.com 复用')
+  const keptUrls = keep.map(t => t.url)
+  assert.ok(keptUrls.includes('https://b.com/y'), '前天抓过的重抓')
+  assert.ok(keptUrls.includes('https://static.com/idx'), 'static-fallback 豁免：发现页必重抓')
+  assert.ok(keptUrls.includes('https://d.com/new'))
+  assert.equal(keptUrls.includes('https://a.com/x'), false)
+  // 防御：垃圾输入目标不炸
+  const r2 = receiptFilter([null, { url: '' }], receipts, '2026-11-10')
+  assert.equal(r2.keep.length, 2)
+})
+
 test('recordFetchReceipts：合并追加、URL 归一、60 天 prune、损坏重建', () => {
   const { mkdtempSync, writeFileSync, readFileSync, rmSync } = await_import_fs()
   const dir = mkdtempSync('receipts-test-')

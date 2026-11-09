@@ -166,7 +166,7 @@ export const TIER1_HOSTS = new Set([
   'api-docs.deepseek.com', 'deepseek.com', 'moonshotai.com', 'moonshot.cn', 'kimi.moonshot.cn',
   'qwen.ai', 'qwenlm.ai', 'github.com', 'huggingface.co', 'arxiv.org', 'openreview.net',
   'microsoft.com', 'apple.com', 'news.microsoft.com', 'amazon.science', 'deepmind.com',
-  'mistral.ai', 'cohere.com', 'x.ai', 'perplexity.ai', 'stability.ai', 'midjourney.com',
+  'mistral.ai', 'cohere.com', 'perplexity.ai', 'stability.ai', 'midjourney.com',
 ])
 export const sourceTier = url => {
   try {

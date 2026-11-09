@@ -235,3 +235,39 @@ const _calendarDayMinus = (dayNum, back) => {
   while (d < 1) { m -= 1; if (m < 1) { m = 12; y -= 1 } ; d += dom(y, m) }
   return +(y + String(m).padStart(2, '0') + String(d).padStart(2, '0'))
 }
+
+// ─── 11-10 P2-③（AIHOT 借鉴 §回执）：fetch 回执消费端 ───
+// 与记录端 finalize.mjs recordFetchReceipts 配对：realm 内消费 args.fetchReceipts，
+// 把「文章页 48h 内已抓过」的候选从 fetch 配额让位给新 URL。
+// 11-10 review 根修①：static-fallback 豁免——兜底注入的是常驻索引页（内容每天变），
+// 且「昨天 discover 挂→兜底抓过、今天 discover 再挂→兜底再注入」是设计内路径，回执
+// 把它跳过 = 双重降级时整板 0 候选（兜底救板机制被自己的优化拆台）。发现页必须重抓。
+// 11-10 review 根修②：复用窗口收窄为 age<=1（今天/昨天抓过）——原 age<=2 的日历差
+// 实际覆盖 ~72h，与「48h 内内容不变」的文章页假设不符；误复用的代价是丢一天更新，
+// 少复用一次的代价只是重抓一页，取保守侧。
+export const parseFetchReceipts = r => {
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return null
+  const ok = {}
+  for (const [k, v] of Object.entries(r)) {
+    if (typeof k === 'string' && k && typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) ok[k] = v
+  }
+  return Object.keys(ok).length ? ok : null
+}
+export const receiptFilter = (targets, receipts, today) => {
+  const keep = []
+  let reused = 0
+  for (const t of targets || []) {
+    if (t && t.found_via === 'static-fallback') { keep.push(t); continue }  // 发现页必重抓（根修①）
+    const nu = t ? normURL(t.url) : null
+    const lastDay = nu ? receipts[nu] : null
+    let hit = false
+    if (lastDay) {
+      const ed = normalizeDate(lastDay), td = normalizeDate(today)
+      const age = (ed != null && td != null) ? daysBetween(ed, td) : 999
+      if (age >= 0 && age <= 1) hit = true
+    }
+    if (hit) { reused++; continue }
+    keep.push(t)
+  }
+  return { keep, reused }
+}

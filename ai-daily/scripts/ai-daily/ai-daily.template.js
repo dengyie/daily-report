@@ -676,38 +676,17 @@ if (REPORTED_LEDGER) {
 	}
 
 	// ─── 11-10 P2-③（AIHOT 借鉴 §回执）：fetch 回执过滤 ───
-	// 48h 内已抓过的 URL 不再占 MAX_FETCH 配额——内容 48h 内不会变，重抓是纯时间浪费；
-	// 名额让给没抓过的候选（fetch_budget_dropped 的痛点正是「发现的比配额多」）。
-	// args.fetchReceipts = { [normURL]: 'YYYY-MM-DD' }，编排器一次性副本注入（同账本机制，
-	// 主文件路径不进 prompt）。无注入 → 过滤关闭（首跑/fail-open）。
-	const FETCH_RECEIPTS = (() => {
-		const r = args.fetchReceipts
-		if (!r || typeof r !== 'object' || Array.isArray(r)) return null
-		const ok = {}
-		for (const [k, v] of Object.entries(r)) {
-			if (typeof k === 'string' && k && typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) ok[k] = v
-		}
-		return Object.keys(ok).length ? ok : null
-	})()
+	// 判定逻辑提取为 receiptFilter 纯函数（aihot-borrowings.test.mjs 直接单测；此处只做
+	// boardURLMap 遍历接线）。语义与豁免规则见函数头注释。
+	const FETCH_RECEIPTS = parseFetchReceipts(args.fetchReceipts)
 	let receiptsReused = 0
 	if (FETCH_RECEIPTS) {
 		for (const [board, urls] of [...boardURLMap.entries()]) {
-			const remain = []
-			for (const t of urls) {
-				const nu = normURL(t.url)
-				const lastDay = nu ? FETCH_RECEIPTS[nu] : null
-				let reuse = false
-				if (lastDay) {
-					const ed = normalizeDate(lastDay), td = normalizeDate(DATE)
-					const age = (ed != null && td != null) ? daysBetween(ed, td) : 999
-					if (age >= 0 && age <= 2) reuse = true
-				}
-				if (reuse) { receiptsReused++; continue }
-				remain.push(t)
-			}
-			boardURLMap.set(board, remain)
+			const { keep, reused } = receiptFilter(urls, FETCH_RECEIPTS, DATE)
+			if (reused) receiptsReused += reused
+			boardURLMap.set(board, keep)
 		}
-		if (receiptsReused) log('FETCH-RECEIPT-FILTER 48h 内已抓候选跳过 ' + receiptsReused + ' 条（名额让给新 URL）')
+		if (receiptsReused) log('FETCH-RECEIPT-FILTER 48h 内已抓候选跳过 ' + receiptsReused + ' 条（名额让给新 URL；static-fallback 豁免必重抓）')
 	}
 
 	// 9/20：linuxdo-cdp snippet 直铸必须在 allocateFetchBudget **之前**。
