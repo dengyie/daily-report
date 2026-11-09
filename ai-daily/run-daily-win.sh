@@ -193,6 +193,21 @@ fi
     echo "GATEWAY-ROUTE cf-fallback=$GATEWAY_CF_URL（直连 curl code=${GW_CODE:-n/a}，显式回退 CF 域名）"
   fi
 
+  # 11-10 账本注入副本隔离（10-31 补跑覆盖事故根修）：subagent 拿到主账本路径后
+  # 可能有预期外的读写——10-31 补跑 subagent 把 args（当时的截断副本）写回主文件，
+  # 11-01~07 的 31 条已报道记录瞬间丢失（11-10 从各日 verified-claims 重建）。
+  # 现在每次 run 把主账本复制到一次性 inject 副本、prompt 只给副本路径：主文件的
+  # 磁盘内容是 finalize 记账（recordLedger 以磁盘文件为 merge base）的唯一权威源，
+  # 副本被写坏只影响本轮跨天去重（fail-open，degraded 如实上报），零损伤面。
+  LEDGER_INJECT="${LOGDIR}/published-ledger.inject.json"
+  rm -f "$LEDGER_INJECT"
+  if [ -f "$LEDGER" ]; then
+    cp -f "$LEDGER" "$LEDGER_INJECT" && \
+      echo "LEDGER-INJECT 主账本 $(wc -c < "$LEDGER" | tr -d ' ')B → 一次性副本（主文件路径不进 prompt）"
+  else
+    echo "LEDGER-INJECT 主账本不存在 → 不注入（首跑语义，fail-open）"
+  fi
+
   # 9/13 编排器阶梯：DeepSeek 先打（CPA 别名抽签，同档连打几次），不行再 grok/opus/gemini。
   # 每档先工具类探针，探针失败不空拉本档、换下一档。快死（<10min 无产物）才同档重试；
   # 跑满 10min+ 仍无产物属 workflow 深处失败，不盲目重拉也不再爬级。
@@ -219,7 +234,7 @@ fi
     for TRY in $(seq 1 "$TRIES"); do
       ATTEMPT=$((ATTEMPT + 1))
       LAUNCH_T0="$(date '+%s')"
-      LAUNCH_OUT="$(claude -p "【执行纪律，优先级最高】收到指令后第一步就必须真实调用 Workflow 工具运行 ai-daily；严禁用文字叙述、想象或假装执行来代替真实工具调用；Workflow 返回 payloads 之前不得声称「生成成功」或「已写入」；Workflow 调用若报错，原样输出错误文本并立即结束。以下是任务：运行 ai-daily skill，生成今天的 AI 日报。调用 Workflow 时 args 必须包含 window:{\"from\":\"$WFROM\",\"to\":\"$WTODAY\"}（这两个日期是宿主算好的字面量，原样传入，不要自己重新计算）。同时请带上 {\"linuxdoCdpHost\":\"127.0.0.1:9222\",\"linuxdoMaxSources\":12,\"webFetchViaCdp\":true}（复用 9222 登录态 Chrome 抓 linux.do 与 fetch 正文；论坛配额 12 与模板默认一致——mint 直铸不占 fetch 配额，供「社区热度」叙事仍有得选）。linuxdoPrefetched 已预抓到文件 $PREFETCH_JSON：请 Read 该文件，把解析后的 JSON 对象作为 args.linuxdoPrefetched 传入（成功为 ok:true + posts；失败为 ok:false + reason）。跨天去重账本 $LEDGER：若该文件存在，请 Read 并把解析后的 JSON 数组作为 args.reportedLedger 传入（不存在则不传该参数，不要视为错误）。不要把任何文件内容贴进本指令或 shell。最后简述头条与覆盖结果。" --model "$MODEL" --dangerously-skip-permissions ${CLAUDE_SETTINGS_FLAG[@]+"${CLAUDE_SETTINGS_FLAG[@]}"} 2>&1)"
+      LAUNCH_OUT="$(claude -p "【执行纪律，优先级最高】收到指令后第一步就必须真实调用 Workflow 工具运行 ai-daily；严禁用文字叙述、想象或假装执行来代替真实工具调用；Workflow 返回 payloads 之前不得声称「生成成功」或「已写入」；Workflow 调用若报错，原样输出错误文本并立即结束。以下是任务：运行 ai-daily skill，生成今天的 AI 日报。调用 Workflow 时 args 必须包含 window:{\"from\":\"$WFROM\",\"to\":\"$WTODAY\"}（这两个日期是宿主算好的字面量，原样传入，不要自己重新计算）。同时请带上 {\"linuxdoCdpHost\":\"127.0.0.1:9222\",\"linuxdoMaxSources\":12,\"webFetchViaCdp\":true}（复用 9222 登录态 Chrome 抓 linux.do 与 fetch 正文；论坛配额 12 与模板默认一致——mint 直铸不占 fetch 配额，供「社区热度」叙事仍有得选）。linuxdoPrefetched 已预抓到文件 $PREFETCH_JSON：请 Read 该文件，把解析后的 JSON 对象作为 args.linuxdoPrefetched 传入（成功为 ok:true + posts；失败为 ok:false + reason）。跨天去重账本 $LEDGER_INJECT：若该文件存在，请读取并解析为 JSON 数组作为 args.reportedLedger 传入（文件较大，Read 工具可能截断——若解析出条目数异常少或解析失败，改用 Bash 执行 node -e \"console.log(require('fs').readFileSync('$LEDGER_INJECT','utf8'))\" 取完整内容再解析；不存在则不传该参数，不要视为错误；该文件是一次性只读副本，只读它、不要写入或修改任何账本文件）。不要把任何文件内容贴进本指令或 shell。最后简述头条与覆盖结果。" --model "$MODEL" --dangerously-skip-permissions ${CLAUDE_SETTINGS_FLAG[@]+"${CLAUDE_SETTINGS_FLAG[@]}"} 2>&1)"
       RC=$?
       printf '%s\n' "$LAUNCH_OUT"
       LAUNCH_SECS=$(( $(date '+%s') - LAUNCH_T0 ))
