@@ -118,6 +118,23 @@ export const ledgerEntriesFromClaims = (claimsJson, date) => {
 // 昨天抓过且未报道的今天重抓产出趋零）。60 天 prune（与账本 LEDGER_KEEP_DAYS 同期）。
 // tmp+rename 原子写，损坏即重建（回执是纯优化态，fail-open 零风险面）。
 export const DEFAULT_FETCH_RECEIPTS = path.join(os.homedir(), '.ai-daily', 'fetch-receipts.json')
+// 回执 URL 收集（review P1 根修后从 cliMain 提取为纯函数，配真实形态回归测试）：
+// claims 顶层是 {confirmed:[{source}]} 对象（template claimsJson），sources 顶层是
+// {sources:[{url, claimUrls}]} 对象（template sourcesJson）——数组形态仅作兼容兜底。
+// claimUrls 必收：索引页抓出的真实文章页正是「抓过但 0-claim」的回执域主体。
+export const collectReceiptUrls = (claimsJson, sourcesJson) => {
+  const cl = JSON.parse(claimsJson || '[]')
+  const src = JSON.parse(sourcesJson || '{}')
+  const urls = new Set()
+  for (const c of (Array.isArray(cl) ? cl : (cl && cl.confirmed) || [])) { if (c && c.source) urls.add(c.source) }
+  const srcArr = Array.isArray(src) ? src : (src && Array.isArray(src.sources)) ? src.sources : []
+  for (const s of srcArr) {
+    if (!s) continue
+    if (s.url) urls.add(s.url)
+    for (const u of s.claimUrls || []) { if (u) urls.add(u) }
+  }
+  return [...urls]
+}
 export const recordFetchReceipts = (receiptsPath, urls, date) => {
   let existing = {}
   if (fs.existsSync(receiptsPath)) {
@@ -311,13 +328,12 @@ async function cliMain() {
       ledgerAdded = added
       console.log(`LEDGER-RECORDED ${ledgerPath} total=${total} added=${added}`)
       // 11-10 P2-③：fetch 回执（claims.source ∪ sources.url 的抓取日台账）
+      // review P1 根修：解析与收集提取为 collectReceiptUrls（吃 template 真实对象形态
+      // {confirmed}/{sources}，数组仅兼容兜底；claimUrls 必收）——旧版 Array.isArray
+      // 恒 false → sources.url 全丢，回执只收 claim 源，过滤近似 no-op。
       try {
-        const cl = JSON.parse(spec.payloads.claims || '[]')
-        const src = JSON.parse(spec.payloads.sources || '[]')
-        const urls = new Set()
-        for (const c of (Array.isArray(cl) ? cl : (cl && cl.confirmed) || [])) { if (c && c.source) urls.add(c.source) }
-        for (const s of (Array.isArray(src) ? src : [])) { if (s && s.url) urls.add(s.url) }
-        const rr = recordFetchReceipts(DEFAULT_FETCH_RECEIPTS, [...urls], spec.date)
+        const urls = collectReceiptUrls(spec.payloads.claims, spec.payloads.sources)
+        const rr = recordFetchReceipts(DEFAULT_FETCH_RECEIPTS, urls, spec.date)
         console.log(`FETCH-RECEIPTS-RECORDED ${DEFAULT_FETCH_RECEIPTS} total=${rr.total} added=${rr.added}`)
       } catch (e2) {
         console.error('FETCH-RECEIPTS-WARN 记回执失败（不影响产物与账本）: ' + (e2 && e2.message))

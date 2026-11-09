@@ -2144,6 +2144,12 @@ const _calendarDayMinus = (dayNum, back) => {
 // 实际覆盖 ~72h，与「48h 内内容不变」的文章页假设不符；误复用的代价是丢一天更新，
 // 少复用一次的代价只是重抓一页，取保守侧。
 const parseFetchReceipts = r => {
+  // 字符串容错（review P2 根修，对齐 parseReportedLedger 契约）：subagent 漏解析、把文件
+  // 原文当字符串传入是账本侧真实事故形态（9/20 resume 复用 omit 同类）——吃 JSON 字符串，
+  // 坏字符串/解析失败 → null（fail-open 过滤关闭，不炸成稿）。
+  if (typeof r === 'string') {
+    try { r = JSON.parse(r) } catch { return null }
+  }
   if (!r || typeof r !== 'object' || Array.isArray(r)) return null
   const ok = {}
   for (const [k, v] of Object.entries(r)) {

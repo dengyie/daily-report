@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { auditReportBodies, extractSynthAtoms } from '../render-md.mjs'
 import { sourceTier } from '../boards.mjs'
 import { computeClusterHeat, isRoundupCluster } from '../cluster.mjs'
-import { recordFetchReceipts } from '../finalize.mjs'
+import { recordFetchReceipts, collectReceiptUrls } from '../finalize.mjs'
 
 // ─── 11-10 P1（AIHOT 借鉴）：合成正文幻觉确定性校验 ───
 
@@ -103,6 +103,28 @@ test('parseFetchReceipts：合法对象通过，非对象/数组/脏值过滤，
   assert.equal(parseFetchReceipts(null), null)
   assert.equal(parseFetchReceipts([['a', 'b']]), null)
   assert.equal(parseFetchReceipts({ x: 123 }), null)  // 非字符串值全滤→空
+})
+
+test('parseFetchReceipts：JSON 字符串容错（review P2 根修，对齐 parseReportedLedger 契约）', () => {
+  assert.deepEqual(parseFetchReceipts('{"a.com":"2026-11-09"}'), { 'a.com': '2026-11-09' })
+  assert.equal(parseFetchReceipts('{broken'), null, '坏字符串 → null（fail-open 过滤关闭）')
+  assert.equal(parseFetchReceipts('null'), null)
+})
+
+test('collectReceiptUrls：template 真实对象形态（review P1 根修回归锁）——{confirmed}/{sources} 对象 + claimUrls 必收', () => {
+  // template.js 真实形态：claimsJson 顶层 {confirmed:[]}，sourcesJson 顶层 {sources:[{url, claimUrls}]}
+  const claimsJson = JSON.stringify({ date: '2026-11-10', confirmed: [{ source: 'https://a.com/x' }], refuted: [] })
+  const sourcesJson = JSON.stringify({ date: '2026-11-10', sources: [
+    { url: 'https://b.com/idx' },                                            // 索引页（0-claim 也必进回执域）
+    { url: 'https://c.com/x', claimUrls: ['https://c.com/art-1', 'https://c.com/art-2'] },  // 索引页抓出的文章页
+  ] })
+  const urls = collectReceiptUrls(claimsJson, sourcesJson).sort()
+  assert.deepEqual(urls, ['https://a.com/x', 'https://b.com/idx', 'https://c.com/art-1', 'https://c.com/art-2', 'https://c.com/x'])
+  // 数组形态兼容兜底
+  const arrUrls = collectReceiptUrls(JSON.stringify([{ source: 'https://d.com/w' }]), JSON.stringify([{ url: 'https://e.com/v' }]))
+  assert.deepEqual(arrUrls.sort(), ['https://d.com/w', 'https://e.com/v'])
+  // 空输入防御
+  assert.deepEqual(collectReceiptUrls(null, null), [])
 })
 
 test('receiptFilter：static-fallback 豁免必重抓（review 根修①），age<=1 复用、age>=2 重抓（根修②）', () => {
