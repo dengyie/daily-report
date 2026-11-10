@@ -25,15 +25,24 @@ test('Windows runner 在场且可读', () => {
   assert.ok(sh.includes('run-daily-win'), '文件自标为 Windows runner')
 })
 
-test('Windows runner：预抓 JSON 不得插进双引号 claude -p，json 只落盘供 Read', () => {
+test('Windows runner：预抓 JSON 不得插进双引号 claude -p，注入走 host-inject bake（11-11 根治）', () => {
   const sh = win()
   assert.doesNotMatch(sh, /linuxdoPrefetched.: \$\(cat/, 'JSON 本体不得 $(cat) 进 claude -p 字符串')
-  assert.match(sh, /linuxdo-prefetch\.json/, '预抓落盘路径在场，供编排器 Read 文件注入 args')
+  assert.match(sh, /linuxdo-prefetch\.json/, '预抓落盘路径在场，供 host-inject bake 进 bundle')
   const promptLine = sh.split('\n').find(l => /运行 ai-daily skill/.test(l) && /dangerously-skip-permissions/.test(l))
   assert.ok(promptLine, '真实 launch 行在场')
   assert.ok(!/\$\(cat/.test(promptLine), 'claude -p 行不得 $(cat) 任何文件')
-  assert.match(promptLine, /linuxdoPrefetched/, 'prompt 指示注入 args.linuxdoPrefetched')
-  assert.match(promptLine, /args\.reportedLedger/, 'prompt 指示注入 args.reportedLedger（跨天账本）')
+  // 11-11 注入链根治：数据不再经模型转写——prompt 禁止 Read 注入文件、args 不传大对象；
+  // 宿主在 launch 前 bake（HOST_INJECT 段，args 真传优先兜底合并）。
+  assert.doesNotMatch(promptLine, /args\.reportedLedger/, 'prompt 不得再指示转写账本（四连事故根修）')
+  assert.doesNotMatch(promptLine, /args\.linuxdoPrefetched/, 'prompt 不得再指示转写 prefetch')
+  assert.doesNotMatch(promptLine, /args\.fetchReceipts/, 'prompt 不得再指示转写回执')
+  assert.match(promptLine, /outDir/, 'prompt 必须含 outDir 字面量（v2 事故根修：缺字段被 realm 拒）')
+  assert.match(promptLine, /HOST_INJECT/, 'prompt 说明数据已 bake，禁止 Read 注入文件')
+  // 编排器必须在 launch 前 bake 且失败即中止（不空拉）
+  assert.match(sh, /host-inject\.mjs/, 'launch 前调用 host-inject.mjs')
+  assert.match(sh, /HOST-INJECT-FAIL.*中止|bake 失败时注入链不可信/, 'bake 失败中止护栏在场')
+  assert.match(sh, /--ledger "\$LEDGER_INJECT"/, 'bake 输入为一次性账本副本（主账本路径不进任何模型可见面）')
 })
 
 test('Windows runner：AI_DAILY_RUN_START_EPOCH 导出（10-05 P1 墙钟 real_s 数据链路）', () => {
