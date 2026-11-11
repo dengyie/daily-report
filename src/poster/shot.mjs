@@ -175,6 +175,35 @@ export async function renderHtmlToPng(html, { width, height, scale = DEVICE_SCAL
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     throw new PosterRenderError("POSTER_BAD_SIZE", `海报尺寸无效：${width}x${height}`);
   }
+  // Retry once on the "Chrome ran but produced a wrong image" class of
+  // failures. A 0-byte file or a wrong-size PNG under memory pressure is
+  // usually transient — the second run starts from a clean temp dir and a
+  // fresh renderer process. Structural failures (no Chrome, bad size, spawn
+  // error, timeout) are NOT retried: they will happen again deterministically.
+  const TRANSIENT_CODES = new Set([
+    "POSTER_EMPTY_PNG",
+    "POSTER_NOT_PNG",
+    "POSTER_TRUNCATED_PNG",
+    "POSTER_BAD_DIM",
+  ]);
+  let lastErr;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await renderHtmlToPngOnce(html, { width, height, scale, timeoutMs, deps });
+    } catch (err) {
+      lastErr = err;
+      const code = err && err.code;
+      if (attempt === 1 && TRANSIENT_CODES.has(code)) {
+        console.error(`POSTER-RETRY ${code}（第 1 次产物异常，空图/尺寸错可瞬态）→ 重试 1 次`);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
+async function renderHtmlToPngOnce(html, { width, height, scale, timeoutMs, deps }) {
   const bin = deps.chromeBin ?? (await resolveChromeBin());
   if (!bin) {
     throw new PosterRenderError(

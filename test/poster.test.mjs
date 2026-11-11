@@ -349,6 +349,62 @@ test("renderHtmlToPng: a browser that produces nothing is a loud failure", () =>
   );
 });
 
+// 11-11 P7: an empty/wrong-size PNG under memory pressure is usually transient
+// — the second run starts from a clean temp dir and a fresh renderer. Retry
+// once on the transient class; structural failures still fail immediately.
+test("renderHtmlToPng: retries once on transient bad output and succeeds", async () => {
+  const calls = [];
+  const deps = {
+    chromeBin: "/bin/true",
+    spawnFn: async (_bin, args) => {
+      calls.push(args);
+      const shot = args.find((a) => a.startsWith("--screenshot="));
+      // First attempt: empty file (renderer died under memory pressure).
+      // Second attempt: a good 100x100 PNG.
+      if (calls.length === 1) await writeFile(shot.slice("--screenshot=".length), Buffer.alloc(0));
+      else await writeFile(shot.slice("--screenshot=".length), pngHeader(100, 100));
+    },
+  };
+  const buf = await renderHtmlToPng("<html></html>", { width: 100, height: 100, scale: 1, deps });
+  assert.equal(buf.length, 33);
+  assert.equal(calls.length, 2, "exactly one retry");
+});
+
+test("renderHtmlToPng: transient failure twice in a row still fails loud", async () => {
+  let calls = 0;
+  const deps = {
+    chromeBin: "/bin/true",
+    spawnFn: async () => { calls++; }, // never writes a PNG
+  };
+  await assert.rejects(
+    () => renderHtmlToPng("<html></html>", { width: 100, height: 100, deps }),
+    (err) => err instanceof PosterRenderError && err.code === "POSTER_EMPTY_PNG",
+  );
+  assert.equal(calls, 2, "two attempts, then give up");
+});
+
+test("renderHtmlToPng: structural failures (bad size / spawn error) are not retried", async () => {
+  // chromeBin: null falls through to resolveChromeBin() (which finds a real
+  // Chrome on dev machines), so the structural case to exercise here is the
+  // spawn error path — a deterministic failure that retrying cannot fix.
+  let calls = 0;
+  const deps = {
+    chromeBin: "/bin/true",
+    spawnFn: async () => { calls++; throw new Error("ENOENT spawn boom"); },
+  };
+  await assert.rejects(
+    () => renderHtmlToPng("<html></html>", { width: 100, height: 100, deps }),
+    (err) => !(err instanceof PosterRenderError) || err.code === "POSTER_RENDER_SPAWN",
+  );
+  assert.equal(calls, 1, "no retry on structural failure");
+  // BAD_SIZE is rejected before any spawn, same single-shot contract.
+  await assert.rejects(
+    () => renderHtmlToPng("<html></html>", { width: 0, height: 900, deps }),
+    (err) => err instanceof PosterRenderError && err.code === "POSTER_BAD_SIZE",
+  );
+  assert.equal(calls, 1, "size validation still precedes spawn");
+});
+
 // --- translation ----------------------------------------------------------
 
 test("parseTranslationLines: strips fences and numbering, keeps order", () => {
