@@ -36,14 +36,34 @@ const DEFAULT_OUT = path.resolve(HERE, '../../.claude/workflows/ai-daily.js')
 // gateClaims 批量分账，纯函数零依赖 → 排 ledger 后（无依赖关系，纯约定）、linuxdo 前。
 const MODULES = ['url-polyfill', 'date-utils', 'schemas', 'boards', 'dedup', 'budget', 'wallclock', 'ladder', 'fallback', 'prompts', 'render-md', 'cluster', 'ledger', 'claim-gate', 'linuxdo']
 
-// 剥模块为可 inline 文本：去 import 行（依赖由顺序保证）、export 前缀、模块头注释。
+// 剥模块为可 inline 文本，并做块级作用域隔离（11-11 P9）：
+//   去 import 行（依赖由顺序保证）、export 前缀，body 整体包进 IIFE，导出面解构回顶层。
+// 治 8/23 C1 根因：此前整文件平铺 inline，模块顶层标识符直接落在 bundle 顶层 →
+// 同形函数（tokenize 三套）必须靠「不同词法名」的**人肉纪律**防撞车；漏守即宿主
+// new Function 抛 `Identifier 'x' has already been declared`（node --check 假绿）。
+// P9 后私有顶层标识符封闭在各自 IIFE 内，跨模块撞名在**结构上不可能**，纪律退役；
+// 唯一残留约束 = 各模块**导出面**不得重名（解构到顶层仍是重名 decl）——构建期
+// syntaxGate 的 node --check 必然抛重定义 SyntaxError，响亮失败不静默。
+// 注意约束：每个 export 声明须单名单行（现有 15 模块全如此）；`export const A = 1, B = 2`
+// 多名单行形态不在支持之列（B 会漏出导出面），新增模块须遵守。
+const EXPORT_DECL_RE = /^export\s+(const|let|var|function|async function)\s+([A-Za-z_$][\w$]*)/
 const stripModule = name => {
   const src = fs.readFileSync(path.join(HERE, name + '.mjs'), 'utf8')
+  const exported = []
   const body = src.split('\n')
     .filter(l => !/^import\s/.test(l))
-    .map(l => l.replace(/^export\s+(const|function|async function)/, '$1'))
+    .map(l => {
+      const m = l.match(EXPORT_DECL_RE)
+      if (m) exported.push(m[2])
+      return l.replace(/^export\s+(const|let|var|function|async function)/, '$1')
+    })
     .join('\n')
-  return '// ─── inline: ' + name + ' ───\n' + body.trim()
+  if (!exported.length) throw new Error('inline 模块须至少一个导出（IIFE 解构面为空）: ' + name)
+  return '// ─── inline: ' + name + '（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───\n'
+    + 'const { ' + exported.join(', ') + ' } = (() => {\n'
+    + body.trim() + '\n'
+    + 'return { ' + exported.join(', ') + ' }\n'
+    + '})()'
 }
 
 const build = () => {
@@ -156,7 +176,8 @@ const main = () => {
 //   ① 断言顶层 export 有且仅有一个、且就是模板 meta 标记（新形态 export 一律构建失败，防止变换静默漏剥）；
 //   ② 剥该 export + 整体包进 async function（return/await 皆合法）；
 //   ③ node --check 变换后文本：纯函数体、无 export → 与模块检测/镜像 package.json type 完全无关。
-// 护栏强度不降：作用域重名、token 级语法错在函数体内照样抛；变换前提本身是断言。
+// 护栏强度不降：IIFE 化后跨模块作用域重名在结构上已不可能（11-11 P9），但模块**导出面**重名、
+// token 级语法错在函数体内照样抛；变换前提本身是断言。
 // 运行时（Workflow harness 以函数体语义加载产物）与 build.test.mjs 的 new Function 探针同构，故此变换
 // 校验的就是真实执行语法。
 const TEMPLATE_EXPORT_DECL = 'export const meta = {'

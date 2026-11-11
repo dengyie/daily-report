@@ -75,7 +75,8 @@ const VERIFY_INFLIGHT_BUFFER_MS = typeof args.verifyInflightBufferMs === 'number
 // 第 78 行会走到 defaultWindowFrom，而其 const 定义在占位符块（原 128 行区）之后，
 // 模块求值即 ReferenceError 秒杀整个 workflow（10-31 全天 ai-daily 颗粒无收的根因：
 // 模型没传 window 的 launch 一律秒死）。占位符位置=求值顺序，故上提到此。
-// ─── inline: url-polyfill ───
+// ─── inline: url-polyfill（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { installUrlPolyfill } = (() => {
 // workflow realm 缺失 URL 全局的最小 WHATWG URL polyfill（2026-08-22 实证根因）。
 // Workflow 脚本 realm 无 URL（typeof URL==='undefined'），dedup._hostnameOf / render-md.buildCitationMap /
 // render-md.citationBadges 的 `new URL(s)` 抛 ReferenceError 被 catch{continue/null} 静默吞：
@@ -107,7 +108,10 @@ const installUrlPolyfill = () => {
 
 // 模块加载即注入（workflow realm inline 后于顶部执行；node:test 已有全局 URL 则跳过）。
 installUrlPolyfill()
-// ─── inline: date-utils ───
+return { installUrlPolyfill }
+})()
+// ─── inline: date-utils（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { URL_HOST_PATTERN, normURL, hostOf, pad2, normalizeDate, makeClaimWindow, calendarDayMinus, defaultWindowFrom, daysBetween, filterSeedsByAge, chunkArr } = (() => {
 // ai-daily 日期/URL/数组纯函数 — 与 workflow 内逐字节一致（claimWindow 改工厂注入，唯一签名变化）。
 
 const URL_HOST_PATTERN = /^[a-z][a-z0-9+.-]*:\/\/(?:[^/?#\\]*@)?(?:www\.)?([^/:?#@\\]+)(?::\d+)?([^?#]*)/i
@@ -188,6 +192,8 @@ const filterSeedsByAge = (seeds, reportDayNum, maxAgeDays) => {
 }
 
 const chunkArr = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out }
+return { URL_HOST_PATTERN, normURL, hostOf, pad2, normalizeDate, makeClaimWindow, calendarDayMinus, defaultWindowFrom, daysBetween, filterSeedsByAge, chunkArr }
+})()
 
 const DATE = typeof args.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.date) ? args.date : null
 // 日报默认抓取 3 天内素材（T-2 ~ T），如 args.window 明确指定则遵从实参
@@ -243,7 +249,8 @@ const WEB_BUDGET_PER = 2  // 9/19 F4：WebSearch 预算改为组内独立计数�
 // 依赖序与 build.mjs MODULES 一致：url-polyfill 最先（注入 globalThis.URL，workflow realm 无 URL 全局，
 // 否则 dedup._hostnameOf / render-md.buildCitationMap 的 new URL() 抛错被 catch 吞 → 完整版 0 角标）；
 // date-utils(normURL) 必须在 boards(GROUPS_RAW.test 闭包) 与 dedup 前。
-// ─── inline: schemas ───
+// ─── inline: schemas（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { DISCOVER_SCHEMA, HARVEST_SCHEMA, EXTRACT_SCHEMA, bindExtractedClaims, VERDICT_SCHEMA, externalCheckState, REPORT_SCHEMA } = (() => {
 // ai-daily schemas — 与 workflow 内逐字节一致（WRITE_RESULT_SCHEMA 已随 mdWriter 代理删除）。
 // 真源；build.mjs 剥 export inline 进 workflow。
 
@@ -369,7 +376,10 @@ const REPORT_SCHEMA = {
     openQuestions: { type: 'array', items: { type: 'string' } },
   },
 }
-// ─── inline: boards ───
+return { DISCOVER_SCHEMA, HARVEST_SCHEMA, EXTRACT_SCHEMA, bindExtractedClaims, VERDICT_SCHEMA, externalCheckState, REPORT_SCHEMA }
+})()
+// ─── inline: boards（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { BOARDS, OFFICIAL_FEEDS, KNOWN_MAJOR_OUT, LABS_ALIASES, GROUPS_RAW, DISCOVER_GROUPS_ALL, computeBoardStates, TIER1_HOSTS, sourceTier, STATIC_FALLBACK_SOURCES } = (() => {
 // ai-daily 花名册与静态配置 — 与 workflow 内逐字节一致。真源；加厂商/改种子只改此文件。
 
 // ─── Deterministic coverage: 10 boards × roster ───
@@ -565,7 +575,10 @@ const STATIC_FALLBACK_SOURCES = [
   { board: 'safety',     url: 'https://www.qbitai.com/', title: '量子位（安全）' },
   { board: 'people',     url: 'https://www.qbitai.com/', title: '量子位（人才）' },
 ]
-// ─── inline: dedup ───
+return { BOARDS, OFFICIAL_FEEDS, KNOWN_MAJOR_OUT, LABS_ALIASES, GROUPS_RAW, DISCOVER_GROUPS_ALL, computeBoardStates, TIER1_HOSTS, sourceTier, STATIC_FALLBACK_SOURCES }
+})()
+// ─── inline: dedup（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { majorKey, makeAddMajor, allocateFetchBudget, roundRobinTake } = (() => {
 // ai-daily 指纹去重 + 轮询公平分配 — 三个历史 bug 在此固化（测试锁定）。
 
 // 同一事实的关键词指纹（取公司/产品名）：发现代理上报与 KNOWN 种子若指同一事件只保留一份。
@@ -726,7 +739,10 @@ const roundRobinTake = (boardMap, n) => {
   }
   return out
 }
-// ─── inline: budget ───
+return { majorKey, makeAddMajor, allocateFetchBudget, roundRobinTake }
+})()
+// ─── inline: budget（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { computePhaseDeadlines, makeBudgetGate } = (() => {
 // ai-daily 阶段墙钟预算 — 第十四项语义的可测试化。
 // 切片(BUDGET_MS)是用户输入、累计死线(PHASE_DEADLINES)是内部状态，混用即 bug（见 memory ai-daily-budget-deadline-semantics）。
 
@@ -758,7 +774,10 @@ const makeBudgetGate = (deadlines, elapsedFn, onSkip) => {
   budgetGate.roomTo = stage => Math.max(0, deadlines[stage] - elapsedFn())
   return budgetGate
 }
-// ─── inline: wallclock ───
+return { computePhaseDeadlines, makeBudgetGate }
+})()
+// ─── inline: wallclock（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { starvationFactor, makeCalibratedElapsed, makeWallCalibrator, makeCircuitBreaker } = (() => {
 // ai-daily 墙钟标定 + 计数型断路器 — 8/31 P1 修复。
 //
 // 背景（8/31 生产 run wf_e14b2828-ff5 实证）：workflow realm 无 Date.now/performance，唯一时钟是
@@ -929,7 +948,10 @@ const makeCircuitBreaker = opts => {
     get stats() { return { failures, successes, consecutive } },
   }
 }
-// ─── inline: ladder ───
+return { starvationFactor, makeCalibratedElapsed, makeWallCalibrator, makeCircuitBreaker }
+})()
+// ─── inline: ladder（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { DEFAULT_LADDER, DEFAULT_LADDER_BUDGET_MS, makeSafeAgentWithLadder } = (() => {
 // ai-daily 模型阶梯降级 — 2026-09-02。
 //
 // 背景（9/01 生产 run 实证）：17 次 Cloudflare 524 打掉 report 两试 → raw archive，
@@ -1023,7 +1045,10 @@ const makeSafeAgentWithLadder = (deps) => {
     return fail(label)
   }
 }
-// ─── inline: fallback ───
+return { DEFAULT_LADDER, DEFAULT_LADDER_BUDGET_MS, makeSafeAgentWithLadder }
+})()
+// ─── inline: fallback（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { buildFallback } = (() => {
 // ai-daily discover 兜底构造器 — 纯函数，供 template inline 与测试直调。
 // 8/22 第二十项：disc 失败的组，从 harvest 已抓到的 digestByKey entries 补 URL 候选进 boardURLMap，
 // 不重跑代理（省墙钟、不烧 token）。本模块抽出兜底构造逻辑为纯函数，消除"测试复刻修复逻辑"的 forward-test 缺陷
@@ -1078,7 +1103,10 @@ const buildFallback = (digestByKey, failedGroups, claimWindow, normURL) => {
   }
   return { fallbackByUrl, recoveredBoards }
 }
-// ─── inline: prompts ───
+return { buildFallback }
+})()
+// ─── inline: prompts（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { harvestPrompt, discoverPrompt, fetchPrompt, externalVerifyPrompt, verifyPrompt, reportPrompt } = (() => {
 // ai-daily prompt 模板 — 与 workflow 内逐字节一致；闭包依赖收敛为 ctx 显式注入。
 // ctx 字段（按消费方分组）：
 //   常量:    WINDOW_LABEL, WFROM, WTO, DATE, GROK_DIR, MAX_URLS_PER_BOARD, WEB_BUDGET_PER, feedMaxChars
@@ -1232,7 +1260,10 @@ const reportPrompt = ctx =>
   "6. **caveats**：注明弱来源/厂商口径/时间敏感。openQuestions 2-4 个。\n\n" +
   "7. 头条优先**窗口内已核查**项。如果素材大部分是超窗重大项（major-out）而窗口内几乎为空，则 oneLiner 和 execSummary 如实写「窗口内无已核头条」，**不得**用距报告日超过 **14 天** 的 major-out 顶 oneLiner/头条；更近的 major-out 至多 1 条进正文并保留 `[窗口外·重大]`。\n\n" +
   "Structured output only. 输出格式：{ sections, oneLiner, execSummary, highlights, trend, caveats, openQuestions } 其中 sections 为 [{ board, title, items: [{ title, summary, confidence, sources, vote, status }] }]，highlights 为 [{ title, why }]，trend 为字符串。"
-// ─── inline: render-md ───
+return { harvestPrompt, discoverPrompt, fetchPrompt, externalVerifyPrompt, verifyPrompt, reportPrompt }
+})()
+// ─── inline: render-md（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { setUrlPolyfillForRealm, extractSynthAtoms, auditReportBodies, buildCitationMap, funnelLines, renderMarkdown, foldWindowMisses, renderDegradedMarkdown } = (() => {
 // ai-daily 确定性 md 渲染 — mdWriter 代理的替代。
 // report 成功 → renderMarkdown（完整版）；report 失败 → renderDegradedMarkdown（降级版，原冒烟 compose 脚本正式化）。
 // 两者输出都进 payloads.md 由 orchestrator 逐字节落盘，md 产出不再受网关波动影响。
@@ -1415,9 +1446,47 @@ const frontmatterLines = (meta, date, window) => {
   if (num(st.major_out) != null) statsParts.push('major_out:' + st.major_out)
   if (num(st.killed) != null) statsParts.push('killed:' + st.killed)
   if (num(st.urls_fetched) != null) statsParts.push('urls_fetched:' + st.urls_fetched)
+  // 11-11 AIHOT 可观测性：信源结构与合成质量计数进 frontmatter（旧报告无此字段则不渲染，向后兼容）。
+  if (num(st.t1_sources) != null) statsParts.push('t1_sources:' + st.t1_sources)
+  if (num(st.synth_body_hallucination) != null) statsParts.push('synth_body_hallucination:' + st.synth_body_hallucination)
   if (statsParts.length) L.push('stats: {' + statsParts.join(', ') + '}')
   L.push('---')
   return L
+}
+
+// 11-11 P5：漏斗/质量行纯函数化——完整版与降级版共用同一数据概览表（降级日也要有量化账）。
+// 输入 meta.stats（可缺/可空），返回 md 表行数组（不含表头）；无任何数字字段时返回 []。
+const funnelLines = stats => {
+  const st = stats && typeof stats === 'object' ? stats : {}
+  const funnel = [
+    ['社区预抓帖', st.community_topics, 'linux.do 社区预抓帖子（登录态 CDP）'],
+    ['发现链接', st.urls_discovered, '全部板块发现的 URL 候选' + (typeof st.fetch_budget_dropped === 'number' && st.fetch_budget_dropped > 0 ? '（配额让位 ' + st.fetch_budget_dropped + ' 条未抓）' : '')],
+    ['抓取正文', st.urls_fetched, '进入配额、实际抓取的来源'],
+    ['提取声明', st.claims_extracted, '可证伪声明（含 quote）'],
+    ['核查确认', st.confirmed, '对抗式 2+1 票确认' + ((st.major_out || 0) ? '（另有 ' + st.major_out + ' 条窗口外·重大）' : '')],
+    ['否决', st.killed, '核查未通过'],
+    ['纳入正文', st.included, '合成后实际写入的条目'],
+    ['话题组', st.topic_groups, '同事件跨条合并的话题组'],
+  ].filter(r => typeof r[1] === 'number')
+  const quality = [
+    ['T1 一手源', st.t1_sources, typeof st.t2_sources === 'number' ? '官方一手域名条目（T2 媒体 ' + st.t2_sources + ' 条）' : '官方一手域名条目'],
+    ['事件热度 top', st.top_heat, '独立域名数 × 24h 半衰（当日头条热度）'],
+    ['回执复用', st.fetch_receipts_reused, '48h 内已抓 URL 跳重抓（节省配额）'],
+    ['幻觉正文替换', st.synth_body_hallucination, '合成正文凭空原子 → 替换为 claim 原文'],
+    ['ROUNDUP 簇', st.roundup_clusters, '汇总盘点类簇（热度 ×0.3 折价）'],
+  ].filter(r => typeof r[1] === 'number')
+  return [...funnel, ...quality]
+}
+
+const renderFunnelSection = (L, stats) => {
+  const rows = funnelLines(stats)
+  if (!rows.length) return
+  L.push('## 📊 数据概览')
+  L.push('')
+  L.push('| 阶段 | 数量 | 说明 |')
+  L.push('|---|---:|---|')
+  for (const [label, v, note] of rows) L.push('| ' + label + ' | ' + v + ' | ' + note + ' |')
+  L.push('')
 }
 
 // 完整版：report 代理产出 sections 后的确定性排版。
@@ -1491,25 +1560,9 @@ const renderMarkdown = ({ date, window, report, coverage, windowMisses, degraded
   }
   // 10/03 对齐参考日报：数据概览漏斗表（meta.stats 扩展字段，确定性渲染；有漏斗字段才渲染）。
   // 链路：社区预抓帖 → 发现链接 → 抓取正文 → 提取声明 → 核查确认/否决 → 纳入正文 → 话题组。
+  // 11-11 P5：表行抽 funnelLines 共用（降级版同表），此处只调渲染。
   if (meta && meta.stats && typeof meta.stats === 'object') {
-    const funnel = [
-      ['社区预抓帖', st.community_topics, 'linux.do 社区预抓帖子（登录态 CDP）'],
-      ['发现链接', st.urls_discovered, '全部板块发现的 URL 候选'],
-      ['抓取正文', st.urls_fetched, '进入配额、实际抓取的来源'],
-      ['提取声明', st.claims_extracted, '可证伪声明（含 quote）'],
-      ['核查确认', st.confirmed, '对抗式 2+1 票确认' + ((st.major_out || 0) ? '（另有 ' + st.major_out + ' 条窗口外·重大）' : '')],
-      ['否决', st.killed, '核查未通过'],
-      ['纳入正文', st.included, '合成后实际写入的条目'],
-      ['话题组', st.topic_groups, '同事件跨条合并的话题组'],
-    ].filter(r => typeof r[1] === 'number')
-    if (funnel.length) {
-      L.push('## 📊 数据概览')
-      L.push('')
-      L.push('| 阶段 | 数量 | 说明 |')
-      L.push('|---|---:|---|')
-      for (const [label, v, note] of funnel) L.push('| ' + label + ' | ' + v + ' | ' + note + ' |')
-      L.push('')
-    }
+    renderFunnelSection(L, meta.stats)
   }
   // 层 1 去重：过滤已在 report.sections items 标题中出现的窗口外项（对齐降级版 D.3，2026-08-22）。
   const majFromSections = (report.sections || []).flatMap(s => s.items || []).map(it => ({ claim: it.title }))
@@ -1622,7 +1675,7 @@ const dedupWindowMisses = (windowMisses, maj) => {
   })
 }
 
-const renderDegradedMarkdown = ({ date, window, confirmed, refuted, coverage, windowMisses, degraded, noNewsCompanies, reportError, generated_by }) => {
+const renderDegradedMarkdown = ({ date, window, confirmed, refuted, coverage, windowMisses, degraded, noNewsCompanies, reportError, generated_by, meta }) => {
   const S = s => String(s || '').replace(/\s+/g, ' ').trim()
   const voteTag = x => x.verifiedByVote ? '`✓' + (x.vote || '?') + '`' : '`◇' + (x.vote || '?') + '`'
   // 降级版来源形态为单 URL x.source（非数组），统一走 buildCitationMap 角标化（spec D.2）。
@@ -1638,6 +1691,8 @@ const renderDegradedMarkdown = ({ date, window, confirmed, refuted, coverage, wi
   // 修 reportError 硬编码（spec D.1）：null/空不抹成 'report agent failed'，如实描述。
   const reason = reportError ? String(reportError).replace(/\s+/g, ' ').trim() : 'report 代理未产出完整版合成结构'
   const L = []
+  // 11-11 P5：降级版同渲染完整版 frontmatter（meta 可选，旧调用无 meta 则无 frontmatter，向后兼容）。
+  for (const fl of frontmatterLines(meta, date, window)) L.push(fl)
   L.push('# 🤖 AI 日报 · ' + date)
   L.push('')
   L.push('> 覆盖 ' + window + ' 窗口 · 生成器 ai-daily（' + modelFromMeta({ generated_by }) + '）' + (degraded && degraded.length ? ' · 降级标记：`' + degraded.join('`、`') + '`' : ''))
@@ -1646,6 +1701,10 @@ const renderDegradedMarkdown = ({ date, window, confirmed, refuted, coverage, wi
   L.push('')
   L.push('降级原因：' + reason + '。以下内容依核查结果逐条拼合，无合成代理润色编排。')
   L.push('')
+  // 11-11 P5：降级日量化账——discover/fetch/verify 各阶段的数字如实入表（report 死了不等于管道没跑）。
+  if (meta && meta.stats && typeof meta.stats === 'object') {
+    renderFunnelSection(L, meta.stats)
+  }
   L.push('### 窗口内新闻（' + inW.length + ' 条，对抗式核查确认）')
   L.push('')
   for (const x of inW) {
@@ -1708,13 +1767,17 @@ const renderDegradedMarkdown = ({ date, window, confirmed, refuted, coverage, wi
   }
   return L.join('\n')
 }
-// ─── inline: cluster ───
+return { setUrlPolyfillForRealm, extractSynthAtoms, auditReportBodies, buildCitationMap, funnelLines, renderMarkdown, foldWindowMisses, renderDegradedMarkdown }
+})()
+// ─── inline: cluster（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { clusterTokenize, clusterClaims, detectNumericConflict, mergeCluster, computeClusterHeat, ROUNDUP_RE, isRoundupCluster } = (() => {
 // ai-daily 确定性聚类（verify → report 之间的纯函数去重，2026-08-23 第二十一项）。
 // 只做"主视图"聚类不放行：被合并的冗余 item 仍保留在 confirmed/claimsJson 归档，cluster 只影响
 // reportBody 的「已聚类」呈现与正文去重（report prompt 4.7 纪律据此写）。
-// clusterTokenize/clusterStopTokens 与 render-md 的 wmTokenize/wmStopTokens 同款（ASCII ≥4 + CJK bigram），
-// 但**必须用不同词法名**——build.mjs 整文件 inline 会让两文件的顶层标识符撞车 → 宿主 new Function
-// 加载必抛 `Identifier 'tokenize' has already been declared` SyntaxError（产物 C1 溃败；node --check 是假绿）。
+// clusterTokenize/clusterStopTokens 与 render-md 的 wmTokenize/wmStopTokens 同款（ASCII ≥4 + CJK bigram）。
+// 11-11 P9 起 build.mjs 以 IIFE 块级作用域 inline，模块私有顶层标识符跨模块撞名已结构性不可能，
+// 「必须用不同词法名」的人肉纪律退役；保留异名是 ESM 源可读性 + 测试/账本指纹引用锚点
+// （旧 8/23 C1 事故：整文件平铺 inline 撞车 → 宿主 new Function SyntaxError，node --check 假绿）。
 // 双轨各自留副本，不抽公共模块：render-md 窗口外折叠用 wm*，本文件聚类/账本指纹用 cluster*。
 
 // 8/23 C1 复核修复：原名 STOP_TOKENS/tokenize 与 render-md 顶层同名冲突 → 改 clusterStopTokens/clusterTokenize。
@@ -1898,7 +1961,10 @@ const isRoundupCluster = cluster => {
   const text = cluster.items.map(c => `${c.title || ''} ${c.claim || ''}`).join(' ')
   return ROUNDUP_RE.test(text)
 }
-	// ─── inline: ledger ───
+return { clusterTokenize, clusterClaims, detectNumericConflict, mergeCluster, computeClusterHeat, ROUNDUP_RE, isRoundupCluster }
+})()
+	// ─── inline: ledger（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { LEDGER_OVERLAP_MIN, LEDGER_SHARE_MIN, LEDGER_LOOKBACK_DAYS, LEDGER_KEEP_DAYS, LEDGER_MAX_TOKENS, parseReportedLedger, fingerprintTokens, makeLedgerEntry, storyMatch, filterReportedTargets, splitSeeds, pruneLedger, buildYesterdayTopics, parseFetchReceipts, receiptFilter } = (() => {
 // ai-daily 跨天已报道账本（9/13 重构新增）——治理「同一事件连续多天整条重复成稿」的 P0 缺口。
 // 旧架构跨 run 零状态：3 天窗口重叠让昨日头条今日仍窗内、KNOWN_MAJOR_OUT 种子 21 天逐日重注入，
 // 实证 V4-Flash-Vision-Exp 连续 3 天、水彩 RL/孙鹏加盟等连续 2 天整条重复（同 URL）。
@@ -2175,7 +2241,10 @@ const receiptFilter = (targets, receipts, today) => {
   }
   return { keep, reused }
 }
-	// ─── inline: claim-gate ───
+return { LEDGER_OVERLAP_MIN, LEDGER_SHARE_MIN, LEDGER_LOOKBACK_DAYS, LEDGER_KEEP_DAYS, LEDGER_MAX_TOKENS, parseReportedLedger, fingerprintTokens, makeLedgerEntry, storyMatch, filterReportedTargets, splitSeeds, pruneLedger, buildYesterdayTopics, parseFetchReceipts, receiptFilter }
+})()
+	// ─── inline: claim-gate（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { isJunkClaim, needsVerification, gateClaims } = (() => {
 // claim-gate — 声明质量门（纯函数，realm 安全：无 process/fs/Date.now/fetch/WebSocket）。
 //
 // 10-04 日报质量审计实证（docs/2026-10-04-claim-quality-gate-design.md §1）：论坛附件标注被
@@ -2222,7 +2291,10 @@ const gateClaims = claims => {
   for (const c of claims || []) (isJunkClaim(c) ? dropped : clean).push(c)
   return { clean, dropped }
 }
-	// ─── inline: linuxdo ───
+return { isJunkClaim, needsVerification, gateClaims }
+})()
+	// ─── inline: linuxdo（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
+const { extractTopicsFromJson, HIGH_VALUE_OUTLINK_RE, extractPostTextFromJson, extractHighValueOutlink, mintLinuxdoSource } = (() => {
 // ai-daily linux.do 解析层（纯导出零调用、零副作用）——**可 inline 进 workflow realm**。
 // 背景（已核实）：Cloudflare cf_clearance 绑定浏览器 TLS 指纹，裸 fetch 必 403，唯一可靠客户端是
 // 9222 真 Chrome（登录态）。经 CDP 开启临时标签 → 等 .json 文档在 Chrome 内渲染为 body 文本 → 读回。
@@ -2310,6 +2382,8 @@ function mintLinuxdoSource(post, date) {
     }],
   }
 }
+return { extractTopicsFromJson, HIGH_VALUE_OUTLINK_RE, extractPostTextFromJson, extractHighValueOutlink, mintLinuxdoSource }
+})()
 
 	// 9/13 跨天账本（严格去重）：args.reportedLedger = 编排器 Read ~/.ai-daily/published-ledger.json 注入的
 	// 条目数组（{day,url,tokens,title,major}，记录端 finalize.mjs）。parseReportedLedger 吃数组与 JSON 字符串，
@@ -3451,7 +3525,16 @@ if (report) {
 // report 成功 → md 必然成功（纯字符串拼接），md 产出不再受网关波动影响。
 const degradedFlags = []
 if (toolError > 0) degradedFlags.push('verify_agent_errors:' + toolError)
-if (budgetDropped.length > 0) degradedFlags.push('fetch_budget_dropped:' + budgetDropped.length)
+// 11-11 P6 旗标疲劳治理：fetch_budget_dropped 的常态形态是配额正常让位（45 发现 16 配额 → 29 条
+// 丢弃是健康运行该有的样子），逐日打旗标 = 狼来了（读者对旗标脱敏，真事故被淹没）。
+// 常态计数走漏斗行「发现链接（配额让位 N 条未抓）」——render-md.mjs 读 stats.fetch_budget_dropped；
+// 只有**异常低抓取率**（实抓 < 发现一半，即丢弃 > 让位）才恢复旗标，那才是需要人看信号的形态。
+{
+  const fetchedN = typeof stats.urls_fetched === 'number' ? stats.urls_fetched : 0
+  const discoveredN = typeof stats.urls_discovered === 'number' ? stats.urls_discovered : 0
+  const lowFetch = budgetDropped.length > 0 && discoveredN > 0 && fetchedN / discoveredN < 0.5
+  if (budgetDropped.length > 0 && (lowFetch || discoveredN === 0)) degradedFlags.push('fetch_budget_dropped:' + budgetDropped.length)
+}
 if (missingBoardKeys.length > 0) degradedFlags.push('discovery_degraded:missing_' + missingBoardKeys.join('+'))
 else if (discoverRows.some(d => d.degraded)) degradedFlags.push('discovery_degraded')
 if (recoveredBoards.size > 0) degradedFlags.push('discovery_recovered:' + [...recoveredBoards].join('+'))
@@ -3497,6 +3580,8 @@ const md = report
       // 10/03 对齐参考日报：漏斗统计（数据概览表）。community_topics=社区预抓帖合计；
       // claims_extracted=全部提取声明；topic_groups=跨条合并话题组；included=纳入正文的条目数。
       stats: { confirmed: confirmed.length, major_out: majorOutClaims.length, killed: killed.length, urls_fetched: sources.length, urls_discovered: discoverRows.reduce((n, d) => n + d.urls.length, 0),
+        // 11-11 P6：配额让位计数进漏斗行（「发现链接」备注显示），不再常态打 degraded 旗标。
+        fetch_budget_dropped: budgetDropped.length,
         community_topics: discoverRows.reduce((n, d) => n + (d.linuxdoTopics || 0), 0), claims_extracted: allClaims.length,
         topic_groups: clusteredMerged.length, included: report.sections ? report.sections.reduce((n, s) => n + ((s && s.items) || []).length, 0) : 0,
         // 11-10 AIHOT 借鉴（tier/热度/回执/幻觉审计可见性）：

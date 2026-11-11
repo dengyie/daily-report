@@ -88,15 +88,30 @@ test('模板 C2：cdp 组不进 inner parallel 的普通代理集（filter 后�
 })
 
 test('模板 C1 侧：cluster 词法名不与 render-md 顶层冲突（clusterTokenize/clusterStopTokens）', () => {
-  // 读 cluster.mjs 真源（build 整文件 inline 后，render-md 同名的未导出 tokenize/STOP_TOKENS 会在产物
-  // 顶层与 cluster 的导出同名 → 宿主 new Function 加载必抛 SyntaxError。C1 修复 = cluster 侧改名）。
+  // 读 cluster.mjs 真源（11-11 P9 起 build 以 IIFE 块级作用域 inline，模块**私有**顶层标识符跨模块
+  // 撞名已结构性不可能，异名纪律退役；此测试保留两点：①cluster 导出面名仍为 clusterTokenize/
+  // clusterStopTokens（ESM 源可读性 + 测试/账本指纹引用锚点）；②产物级隔离由下方 P9 测试与
+  // build.test F1 探针兜底）。
   const CLUSTER = fs.readFileSync(path.join(HERE, '../cluster.mjs'), 'utf8')
   assert.ok(CLUSTER.includes('const clusterStopTokens = new Set'), 'clusterStopTokens 定义在场')
   assert.ok(CLUSTER.includes('export const clusterTokenize = s =>'), 'clusterTokenize 导出在场')
   assert.ok(CLUSTER.includes('clusterTokenize(c.claim)'), 'unionTokens 用 clusterTokenize')
-  // 不得再导出裸名 tokenize / 声明裸名 top-level STOP_TOKENS（与 render-md 顶层撞名）
+  // 不得再导出裸名 tokenize / 声明裸名 top-level STOP_TOKENS（ESM 源语义清晰性；产物撞名由 IIFE 隔离）
   assert.ok(!/export const tokenize =/.test(CLUSTER), 'cluster.mjs 不再导出裸名 tokenize')
   assert.ok(!/^const STOP_TOKENS =/.test(CLUSTER), 'cluster.mjs 不再声明裸名 top-level STOP_TOKENS')
+})
+
+// 11-11 P9：build.mjs IIFE 块级作用域改造——撞名纪律退役的产物级证据。
+test('P9 产物：15 模块全部 IIFE 块级作用域 inline（跨模块私有名撞名结构性不可能）', () => {
+  const code = fs.readFileSync(path.join(HERE, '../../../.claude/workflows/ai-daily.js'), 'utf8')
+  const iifeCount = (code.match(/\} = \(\(\) => \{/g) || []).length
+  assert.ok(iifeCount >= 15, '产物应含 ≥15 个模块 IIFE（实际 ' + iifeCount + '）')
+  // 私有名隔离证据：剥掉全部 IIFE 块后，wmTokenize（render-md 私有）不得再以顶层 decl 裸露
+  const stripped = code.replace(/const \{[^}]*\} = \(\(\) => \{[\s\S]*?\n\}\)\(\)/g, '')
+  assert.ok(!/^const wmTokenize =/m.test(stripped), 'wmTokenize 私有名须封闭在 IIFE 内（P9 隔离证据）')
+  // 导出面解构在场：cluster 与 render-md 的导出面均以解构形式回到 bundle 顶层
+  assert.ok(/const \{[^}]*clusterTokenize[^}]*\} = \(\(\) => \{/.test(code), 'cluster 导出面解构到顶层')
+  assert.ok(/const \{[^}]*renderMarkdown[^}]*\} = \(\(\) => \{/.test(code), 'render-md 导出面解构到顶层')
 })
 
 // ─── 9/01 覆盖韧性 P0：Fetch 首批必须是 prefer 通道混合物，不得二次静态前置 ───
@@ -351,6 +366,15 @@ test('模板：report + verify 走阶梯，harvest/discover/fetch 仍 safeAgent'
   assert.match(TPL, /generated_by: generatedBy/, 'generated_by 走合成变量（换级后的 report 模型，而非永远 MODEL_LADDER[0]）')
   assert.match(TPL, /const generatedBy = 'ai-daily \(' \+ reportModelUsed \+ '\)'/, 'generatedBy 由 report 实际模型拼出')
   assert.match(TPL, /reportModelUsed/, 'report 换级模型必须入 generated_by')
+})
+
+// ─── 11-11 P6 旗标疲劳：fetch_budget_dropped 常态配额丢弃降为漏斗行，仅异常低抓取率才打旗标 ───
+test('模板：fetch_budget_dropped 有抓取率门（<50% 才旗标），常态让位走 stats.fetch_budget_dropped 漏斗行', () => {
+  // 常态形态：45 发现 16 配额 → 29 丢弃是健康运行该有的样子，逐日打旗标 = 狼来了（真事故被淹没）。
+  assert.match(TPL, /lowFetch = budgetDropped\.length > 0 && discoveredN > 0 && fetchedN \/ discoveredN < 0\.5/, '抓取率 <50% 判定在场（异常才旗标）')
+  assert.match(TPL, /lowFetch \|\| discoveredN === 0/, 'discovered=0 时 fail-loud（无发现还丢弃 = 配额配置错，必须旗标）')
+  // 漏斗行通道：stats.fetch_budget_dropped 进 meta.stats（render-md 读它渲染「配额让位 N 条未抓」备注）
+  assert.match(TPL, /fetch_budget_dropped: budgetDropped\.length/, 'stats.fetch_budget_dropped 进 meta.stats（漏斗行数据源）')
 })
 
 test('模板：withDeadline reject 透传错误，不得抹成 null', () => {
