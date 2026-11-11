@@ -108,7 +108,10 @@ export async function prefetchLinuxDo(opts = {}) {
   })
   if (!ld.ok || !ld.posts || !ld.posts.length) {
     // 不把失败当成功 JSON 输出：抛错（携带原因），CLI 层打印 stderr。
-    const e = new Error('linuxdo-prefetch 未成功: ' + (ld.reason || 'empty_posts'))
+    // 11-11 C：fetchLinuxDoNews34 抓到页但 posts 空时 ok:true 且 reason=''——如实归因 empty_posts
+    // 会与「全噪声 empty_posts」混淆并误导重试判定，这里统一回填真实 reason（empty_pages 等）。
+    if (ld.ok && !ld.reason) ld.reason = 'empty_posts'
+    const e = new Error('linuxdo-prefetch 未成功: ' + (ld.reason || 'unknown'))
     e.linuxdoResult = ld
     throw e
   }
@@ -132,10 +135,36 @@ export async function prefetchLinuxDo(opts = {}) {
   }
 }
 
-/** 执行预抓并把成功结果序列化为 JSON 文本。失败 → throw。 */
+/** 执行预抓并把成功结果序列化为 JSON 文本。失败 → throw。
+ * 11-11 C 根修：CDP 链路瞬态失败自动重试——11-02/09/10/11 晨 08:40 连续四天 prefetch 一次性失败
+ * （empty_pages/fetch failed/prefetch_failed 三形态）而手动复跑全 OK，根因是晨间 9222 Chrome
+ * 忙碌/未就绪/目标页未开的一次性抖动，原实现一次失败即 ok:false 落定（社区信源断供整天）。
+ * 瞬态类（empty_pages/连接层错误）重试 2 次（3s/8s 退避）；empty_posts（全噪声，确定性）
+ * 与参数错误不重试。 */
+const TRANSIENT_RETRY_DELAYS_MS = [3000, 8000]
+const isTransientPrefetchError = e => {
+  const reason = String((e && e.linuxdoResult && e.linuxdoResult.reason) || (e && e.message) || '')
+  if (reason === 'empty_posts') return false // 确定性：帖子全被噪声过滤，重试无意义
+  return true // empty_pages / fetch failed / ECONNREFUSED 等 CDP 链路抖动一律视为瞬态
+}
 export async function runPrefetch(opts = {}) {
-  const result = await prefetchLinuxDo(opts)
-  return { ok: true, output: JSON.stringify(result, null, 1) }
+  let lastErr
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const result = await prefetchLinuxDo(opts)
+      if (attempt > 0) process.stderr.write(`linuxdo-prefetch: 第 ${attempt + 1} 次尝试成功（前 ${attempt} 次瞬态失败已重试）\n`)
+      return { ok: true, output: JSON.stringify(result, null, 1) }
+    } catch (e) {
+      lastErr = e
+      if (attempt < TRANSIENT_RETRY_DELAYS_MS.length && isTransientPrefetchError(e)) {
+        const delay = TRANSIENT_RETRY_DELAYS_MS[attempt]
+        process.stderr.write(`linuxdo-prefetch: 瞬态失败（${String((e.linuxdoResult && e.linuxdoResult.reason) || e.message || e).slice(0, 80)}）→ ${delay}ms 后重试 ${attempt + 2}/${TRANSIENT_RETRY_DELAYS_MS.length + 1}\n`)
+        await new Promise(r => setTimeout(r, delay))
+        continue
+      }
+      throw lastErr
+    }
+  }
 }
 
 /** Node CLI 入口：成功 → stdout 打印 JSON；失败 → stderr 诊断 + 非零退出。绝不把错误文本当成功 JSON。 */

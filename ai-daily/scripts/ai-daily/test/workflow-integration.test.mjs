@@ -375,6 +375,11 @@ test('模板：fetch_budget_dropped 有抓取率门（<50% 才旗标），常态
   assert.match(TPL, /lowFetch \|\| discoveredN === 0/, 'discovered=0 时 fail-loud（无发现还丢弃 = 配额配置错，必须旗标）')
   // 漏斗行通道：stats.fetch_budget_dropped 进 meta.stats（render-md 读它渲染「配额让位 N 条未抓」备注）
   assert.match(TPL, /fetch_budget_dropped: budgetDropped\.length/, 'stats.fetch_budget_dropped 进 meta.stats（漏斗行数据源）')
+  // 11-11 晨 run 首战回归根修：抓取率门的取数**不得引用 stats 变量**（stats 只内联进 meta 字面量，
+  // 门位置在 meta 之前 → 引用即 ReferenceError，当日 run 后处理全崩）。口径必须与 L1343 逐字同源。
+  assert.ok(!/const fetchedN = typeof stats\./.test(TPL), '抓取率门不得引用未定义的 stats 变量（晨 run ReferenceError 回归源）')
+  assert.match(TPL, /const fetchedN = typeof sources\.length === 'number' \? sources\.length : 0/, 'fetchedN 取 sources.length（与 meta.stats.urls_fetched 同口径）')
+  assert.match(TPL, /const discoveredN = discoverRows\.reduce\(\(n, d\) => n \+ d\.urls\.length, 0\)/, 'discoveredN 取 discoverRows 全和（与 meta.stats.urls_discovered 同口径）')
 })
 
 test('模板：withDeadline reject 透传错误，不得抹成 null', () => {

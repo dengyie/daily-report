@@ -1291,8 +1291,11 @@ if (toolError > 0) degradedFlags.push('verify_agent_errors:' + toolError)
 // 常态计数走漏斗行「发现链接（配额让位 N 条未抓）」——render-md.mjs 读 stats.fetch_budget_dropped；
 // 只有**异常低抓取率**（实抓 < 发现一半，即丢弃 > 让位）才恢复旗标，那才是需要人看信号的形态。
 {
-  const fetchedN = typeof stats.urls_fetched === 'number' ? stats.urls_fetched : 0
-  const discoveredN = typeof stats.urls_discovered === 'number' ? stats.urls_discovered : 0
+  // 注意：此处无独立 stats 变量（stats 只内联进 L1343 meta 字面量）——当日晨 run 首战实证引用
+  // stats.urls_fetched 即 ReferenceError。口径与 L1343 逐字一致：urls_fetched=sources.length、
+  // urls_discovered=discoverRows 全和。sources(L792)/discoverRows(L510) 均已定义，无 TDZ。
+  const fetchedN = typeof sources.length === 'number' ? sources.length : 0
+  const discoveredN = discoverRows.reduce((n, d) => n + d.urls.length, 0)
   const lowFetch = budgetDropped.length > 0 && discoveredN > 0 && fetchedN / discoveredN < 0.5
   if (budgetDropped.length > 0 && (lowFetch || discoveredN === 0)) degradedFlags.push('fetch_budget_dropped:' + budgetDropped.length)
 }

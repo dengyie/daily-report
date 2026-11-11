@@ -116,6 +116,121 @@ test('prefetchLinuxDo：抓取失败（transport 抛错）→ throw，不带成�
   }
 })
 
+// ─── 11-11 C 根修：runPrefetch 瞬态失败重试（晨间 9222 一次性抖动连续四天断供社区信源）───
+test('runPrefetch：瞬态失败（empty_pages）重试后成功；重试走 stderr 诊断', async () => {
+  const { runPrefetch } = await import(PREFETCH)
+  const { CDP_DEFAULTS } = await import(CDP_CORE)
+  const oldPoll = CDP_DEFAULTS.pollIntervalMs
+  CDP_DEFAULTS.pollIntervalMs = 1
+  const oldDelays = null
+  const mod = null
+  const origDelayMod = null
+  // TRANSIENT_RETRY_DELAYS_MS 是模块级 const 导出，不可就地替换 → 猴补 setTimeout：
+  // 重试退避（3s/8s）在测试里一律 1ms，重试逻辑本身被真实执行；真实退避值由源码断言锁定。
+  const realTimeout = globalThis.setTimeout
+  // 直接替换不可行（const 导出）→ 猴补 setTimeout：delay<10000 的真实 sleep 一律 0ms
+  globalThis.setTimeout = (fn, ms, ...rest) => realTimeout(fn, Math.min(ms || 0, 1), ...rest)
+  let wsOpened = 0
+  const oldFetch = globalThis.fetch
+  const body = JSON.stringify({ topic_list: { topics: [
+    { id: 1, title: '重试成功帖', created_at: '2026-08-20T00:00:00.000Z', excerpt: 'x', like_count: 2 },
+  ] } })
+  globalThis.fetch = async (url) => {
+    const u = String(url)
+    if (u.includes('/json/new?')) { wsOpened++; return { ok: true, status: 200, json: async () => ({ id: 't' + wsOpened, webSocketDebuggerUrl: 'ws://mock/' + wsOpened }) } }
+    if (u.includes('/json/close/')) return { ok: true, status: 200, json: async () => ({}) }
+    throw new Error('unexpected ' + u)
+  }
+  class WS {
+    constructor () { this.onopen = null; this.onmessage = null; queueMicrotask(() => { this.onopen && this.onopen() }) }
+    send (d) {
+      const m = JSON.parse(d)
+      // 空页即 break（linuxdo-fetch L44）：每次尝试只开 1 个 tab。首 tab（第 1 次尝试）返回空
+      // topics（empty_pages）→ throw → 重试；第 2 个 tab 起（重试尝试）恢复返回正常 body。
+      const empty = wsOpened === 1
+      const r = m.method === 'Runtime.evaluate' ? { result: { value: empty ? '{}' : body } } : {}
+      setTimeout(() => { this.onmessage && this.onmessage({ data: JSON.stringify({ id: m.id, result: r }) }) }, 0)
+    }
+    close () {}
+  }
+  const desc = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket')
+  delete globalThis.WebSocket
+  globalThis.WebSocket = WS
+  const errChunks = []
+  let hangFired = false
+  const oldErrWrite = process.stderr.write.bind(process.stderr)
+  process.stderr.write = c => { errChunks.push(String(c)); return true }
+  try {
+    const timer = realTimeout(() => { hangFired = true }, 8000)
+    const r0 = await runPrefetch({ host: 'mock:9222', maxSources: 3 })
+    clearTimeout(timer)
+    assert.equal(r0.ok, true, '重试后成功')
+    assert.match(r0.output, /"ok":\s*true/)
+    assert.ok(wsOpened >= 2, `第 1 次尝试(空页) + 重试(≥1 页) 都开过 tab（wsOpened=${wsOpened}）`)
+    assert.ok(errChunks.some(c => c.includes('瞬态失败') && c.includes('empty_pages')), '重试诊断含瞬态原因')
+    assert.ok(errChunks.some(c => c.includes('次尝试成功')), '成功时留重试痕迹')
+  } finally {
+    process.stderr.write = oldErrWrite
+    globalThis.fetch = oldFetch
+    if (desc) Object.defineProperty(globalThis, 'WebSocket', desc)
+    globalThis.setTimeout = realTimeout
+    CDP_DEFAULTS.pollIntervalMs = oldPoll
+    assert.ok(!hangFired, 'runPrefetch 8s 内完成（未挂死）')
+    void oldDelays; void origDelayMod; void mod
+  }
+})
+
+test('runPrefetch：确定性失败（empty_posts 全噪声）不重试', async () => {
+  const { runPrefetch } = await import(PREFETCH)
+  const { CDP_DEFAULTS } = await import(CDP_CORE)
+  const oldPoll = CDP_DEFAULTS.pollIntervalMs
+  CDP_DEFAULTS.pollIntervalMs = 1
+  const realTimeout = globalThis.setTimeout
+  globalThis.setTimeout = (fn, ms, ...rest) => realTimeout(fn, Math.min(ms || 0, 1), ...rest)
+  const body = JSON.stringify({ topic_list: { topics: [
+    { id: 1, title: '出ChatGPT账号 低价', created_at: '2026-08-20T00:00:00.000Z', excerpt: '出号', like_count: 2 },
+  ] } })
+  let attempts = 0
+  const oldFetch = globalThis.fetch
+  globalThis.fetch = async (url) => {
+    const u = String(url)
+    if (u.includes('/json/new?')) { attempts++; return { ok: true, status: 200, json: async () => ({ id: 't' + attempts, webSocketDebuggerUrl: 'ws://mock/' + attempts }) } }
+    if (u.includes('/json/close/')) return { ok: true, status: 200, json: async () => ({}) }
+    throw new Error('unexpected ' + u)
+  }
+  class WS {
+    constructor () { this.onopen = null; this.onmessage = null; queueMicrotask(() => { this.onopen && this.onopen() }) }
+    send (d) {
+      const m = JSON.parse(d)
+      const r = m.method === 'Runtime.evaluate' ? { result: { value: body } } : {}
+      setTimeout(() => { this.onmessage && this.onmessage({ data: JSON.stringify({ id: m.id, result: r }) }) }, 0)
+    }
+    close () {}
+  }
+  const desc = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket')
+  delete globalThis.WebSocket
+  globalThis.WebSocket = WS
+  try {
+    const timer = realTimeout(() => { throw new Error('runPrefetch no-retry hang') }, 8000)
+    await assert.rejects(() => runPrefetch({ host: 'mock:9222', maxSources: 3 }), /empty_posts/)
+    clearTimeout(timer)
+    // 单次尝试开 maxPages=4 个 tab；若错误重试会 >4
+    assert.equal(attempts, CDP_DEFAULTS.maxPages, 'empty_posts 确定性失败不重试（只开一轮 tab）')
+  } finally {
+    globalThis.fetch = oldFetch
+    if (desc) Object.defineProperty(globalThis, 'WebSocket', desc)
+    globalThis.setTimeout = realTimeout
+    CDP_DEFAULTS.pollIntervalMs = oldPoll
+  }
+})
+
+test('源码：runPrefetch 重试退避常量与瞬态判定契约（3s/8s 两档，empty_posts 豁免）', () => {
+  const code = fs.readFileSync(path.join(HERE, '../linuxdo-prefetch.mjs'), 'utf8')
+  assert.match(code, /TRANSIENT_RETRY_DELAYS_MS = \[3000, 8000\]/, '退避 3s/8s 两档')
+  assert.match(code, /if \(reason === 'empty_posts'\) return false/, 'empty_posts 确定性失败豁免重试')
+  assert.match(code, /attempt < TRANSIENT_RETRY_DELAYS_MS\.length/, '重试上界=退避档数')
+})
+
 // ── 源码断言：复用 fetchLinuxDoNews34，不复制 CDP transport ──
 test('源码：prefetch 调用 fetchLinuxDoNews34，不含 new WebSocket / /json/new / /json/close', () => {
   const code = fs.readFileSync(path.join(HERE, '../linuxdo-prefetch.mjs'), 'utf8')
