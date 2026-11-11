@@ -1286,7 +1286,16 @@ if (report) {
 // report 成功 → md 必然成功（纯字符串拼接），md 产出不再受网关波动影响。
 const degradedFlags = []
 if (toolError > 0) degradedFlags.push('verify_agent_errors:' + toolError)
-if (budgetDropped.length > 0) degradedFlags.push('fetch_budget_dropped:' + budgetDropped.length)
+// 11-11 P6 旗标疲劳治理：fetch_budget_dropped 的常态形态是配额正常让位（45 发现 16 配额 → 29 条
+// 丢弃是健康运行该有的样子），逐日打旗标 = 狼来了（读者对旗标脱敏，真事故被淹没）。
+// 常态计数走漏斗行「发现链接（配额让位 N 条未抓）」——render-md.mjs 读 stats.fetch_budget_dropped；
+// 只有**异常低抓取率**（实抓 < 发现一半，即丢弃 > 让位）才恢复旗标，那才是需要人看信号的形态。
+{
+  const fetchedN = typeof stats.urls_fetched === 'number' ? stats.urls_fetched : 0
+  const discoveredN = typeof stats.urls_discovered === 'number' ? stats.urls_discovered : 0
+  const lowFetch = budgetDropped.length > 0 && discoveredN > 0 && fetchedN / discoveredN < 0.5
+  if (budgetDropped.length > 0 && (lowFetch || discoveredN === 0)) degradedFlags.push('fetch_budget_dropped:' + budgetDropped.length)
+}
 if (missingBoardKeys.length > 0) degradedFlags.push('discovery_degraded:missing_' + missingBoardKeys.join('+'))
 else if (discoverRows.some(d => d.degraded)) degradedFlags.push('discovery_degraded')
 if (recoveredBoards.size > 0) degradedFlags.push('discovery_recovered:' + [...recoveredBoards].join('+'))
@@ -1332,6 +1341,8 @@ const md = report
       // 10/03 对齐参考日报：漏斗统计（数据概览表）。community_topics=社区预抓帖合计；
       // claims_extracted=全部提取声明；topic_groups=跨条合并话题组；included=纳入正文的条目数。
       stats: { confirmed: confirmed.length, major_out: majorOutClaims.length, killed: killed.length, urls_fetched: sources.length, urls_discovered: discoverRows.reduce((n, d) => n + d.urls.length, 0),
+        // 11-11 P6：配额让位计数进漏斗行（「发现链接」备注显示），不再常态打 degraded 旗标。
+        fetch_budget_dropped: budgetDropped.length,
         community_topics: discoverRows.reduce((n, d) => n + (d.linuxdoTopics || 0), 0), claims_extracted: allClaims.length,
         topic_groups: clusteredMerged.length, included: report.sections ? report.sections.reduce((n, s) => n + ((s && s.items) || []).length, 0) : 0,
         // 11-10 AIHOT 借鉴（tier/热度/回执/幻觉审计可见性）：

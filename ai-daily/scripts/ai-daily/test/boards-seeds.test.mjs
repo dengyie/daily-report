@@ -5,6 +5,13 @@
 // 契约：①全量强制一手页 url；②种子间 majorKey 指纹两两不同（否则 makeAddMajor 互相去重）；③落地日全存活。
 // 命名坑（实测锁定）：DeepSeek 新名必须用连字符——空格形式 'DeepSeek V4-Flash…' 会命中 dedup.mjs
 //   `(?:deepseek|深度求索)\s*v4` 而变 fingerprint 'deepseek-v4'，与既有 V4-Pro 种子同 key → 被静默去重。
+// 11-11 审计（种子刷新专项）：近 21d 官方一手里程碑已全部入账本（ERNIE-5.5-Flash-Base 11-05 HF 官方权重页 /
+//   Kimi K3.1 Pro 开源权重 11-07 HF / Meta Muse 11-08 research.meta.ai / GPT-6 Cyber 11-08 openai.com /
+//   LongCat-2.5 11-10 tech.meituan.com / NVIDIA Cosmos 3 11-10 HF 官方博客）→ splitSeeds「报过即退役」
+//   严格语义下不存在合法可插种子（塞已报道事件 = 首日即退役 = 无意义）。故 4 条历史种子（08-13/08-21/08-27
+//   ×2）过 21d 门禁后 0 存活是**当前正确态**：major-out 主路径 = discover 动态上报 + 跨天账本互斥（9/19），
+//   种子表仅 discover 失效保底。下次种子的正确时机 = 出现「官方一手页可溯源且 discover/账本尚未报道」的
+//   新里程碑（如某家 21d 内新发旗舰且漏抓），届时插入并同步本注释。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { KNOWN_MAJOR_OUT } from '../boards.mjs'
@@ -42,7 +49,10 @@ test('P5：落地日 2026-09-01 检查 21d 门禁——4 条全存活、0 条被
 })
 
 test('P5：任一"今天"运行当天至少 1 条存活（种子过期即有 test 提示需要刷新，不让报告静默空节）', t => {
-  const today = normalizeDate(new Date().toISOString().slice(0, 10))
+  // 11-11 修正：toISOString() 是 UTC——本地 0:00-7:59 运行时取到昨天，种子存活窗比真实日期
+  // 滞后一天（11-10 白天 4 条种子「提前过期」的假象与此叠加）。生产 REPORT_DAY 也是本地日历日，
+  // 测试侧必须对齐：用本地时区日期（sv 格式 YYYY-MM-DD）。
+  const today = normalizeDate(new Date().toLocaleDateString('sv'))
   const { kept } = filterSeedsByAge(KNOWN_MAJOR_OUT, today, MAX_SEED_AGE_DAYS)
   // 9/19 语义修订：9/13 起 major-out 主路径 = discover 代理动态上报 + 跨天账本互斥（splitSeeds 消费端），
   // 种子表只是 discover 失效时的保底——「种子全过期」不再等价于「报告空节」。

@@ -219,9 +219,38 @@ meta.json 另有 `ledger_recorded`（recorded/skipped/failed，finalize 回写�
 6. ~~**双仓手工 cp 漂移**~~ → **build.mjs 已加 `--sync-vault`**（产物 + SKILL.md 一步同步，逐字节相同跳过；review 后补：失败路径 VAULT-SYNC-WARN 且 exit 0 有测试；去掉 `export` 防「import 即 main() 写盘」雷区）。
 
 **review 第三轮补修（同日）**：② build.mjs 去 export + 失败路径测试；③ run-daily-win.sh `mkdir -p` 挪到 PATH 导出后（PATH 导出点之前不得有外部命令的纪律收口）+ notify() 参数 PS 转义；⑤ finalize `AI_DAILY_PROD_PREFIX` 改惰性读取（isProdOutDir 每次调用组装，不再模块加载期突变导出数组）+ 子进程 env 测试。
-**遗留观察（不阻塞生产）**：① DEFAULT_LADDER 重排决策（等 10-04 meta.ladder 数据）；② artifact-check.mjs 默认 --dir 仍是 Mac iCloud 路径（Windows 生产显式传 --dir，无实际影响）；③ generate-poster 跨仓双镜像布局（有探测兜底，风险低）。
+**遗留观察（不阻塞生产）**：~~① DEFAULT_LADDER 重排决策~~ → **已复盘关闭（11-11，见 §12.1）**；② artifact-check.mjs 默认 --dir 仍是 Mac iCloud 路径（Windows 生产显式传 --dir，无实际影响）；③ generate-poster 跨仓双镜像布局（有探测兜底，风险低）。
+
+### 12.1 DEFAULT_LADDER 复盘结论（11-11 P8，观察项关闭）
+
+10-29 ~ 11-10 共 11 个自然日 meta.ladder 实证（`E:/profile/note/note/Note/AI/DallyReport/<date>/<date>.meta.json`）：
+
+| 结论 | 数据 |
+|---|---|
+| **verify 首档 deepseek 健康，重排仍无必要** | verify `by_model` 合计 236 票中 deepseek-v4-flash 224 票（94.9%）、grok-4.6 9 票、其余档 3 票；11 个 run 全部 `exhausted: []` 或仅 report 一档 |
+| **report 深档救回率低且可自愈** | 11 天仅 2 次非首级成稿：11-02 report 四级爬满落 gemini-3.7-flash-high（exhausted:["report"]，仍出刊）、11-07 三级落 claude-opus-4-8；其余 9 天首档直出 |
+| **编排器外档（ORCH_LADDER）与 realm 内阶梯已分工明确** | runner 侧 gemini-3.8-flash 置首（10-31 决策），realm 内 deepseek-v4-flash 置首——两层各自实证可用，互不干扰 |
+
+**决策：DEFAULT_LADDER 维持 `[deepseek-v4-flash, grok-4.6, claude-opus-4-8, gemini-3.7-flash-high]` 不动。**
+理由：verify 是票数大头（236 票 vs report 11 次），其 94.9% 首档命中率说明首档网关可用性健康；report 爬级 2/11 天的代价是可接受的（有素材日 ladderBudgetMs 900s 内自愈，无素材日零票不受影响）。若未来某周 deepseek 首档 TRANSIENT 率显著抬升（`ladder_used:verify` 连续出现），再评估把 grok-4.6 置首——数据触发的重排，不做预防性盲改。
 
 ## 13. 变更记录
+
+- **2026-11-11（P 系列优化批 · 12 项清偿）**：11-10 注入链四连事故根治（host-inject bake，`5f7de38`）后的优化迭代，Explore 全仓 survey → 12 项分优先级执行：
+  - **[P1 AIHOT 可观测性闭环]** `render-md.mjs` 漏斗表增质量/信源结构行（`t1_sources`/`t2_sources`/`top_heat`/`fetch_receipts_reused`/`synth_body_hallucination`/`roundup_clusters`——此前 meta.stats 已算 6 字段但从不渲染，读者看不见）；frontmatter stats 增 `t1_sources` + `synth_body_hallucination`；SKILL 第 5 步汇报清单同步。
+  - **[P5 降级日量化账]** `renderDegradedMarkdown` 增可选 `meta`：降级版同渲染 frontmatter + 数据概览漏斗表（report 死了不等于 discover/fetch/verify 管道没跑，数字如实入表）；表行抽 `funnelLines` 纯函数完整版/降级版共用。
+  - **[P6 旗标疲劳]** `fetch_budget_dropped` 常态配额让位（45 发现 16 配额 → 29 丢弃是健康形态）不再逐日打 degraded 旗标——改走漏斗行「发现链接（配额让位 N 条未抓）」备注；仅抓取率 <50%（`urls_fetched/urls_discovered < 0.5`）或 0 发现仍丢弃时恢复旗标。`stats.fetch_budget_dropped` 进 meta.stats。
+  - **[P3 shim 契约移植]** run-daily-shim.test.mjs 的 runner 契约（探针质量/阶梯顺序/子代理跟档/渠道快切）移植到 run-daily-win.test.mjs 锁仓内 runner（原文件 Mac-only 恒 skip，7 断言生产零覆盖——本次 +3 测全绿）；原文件降级注释。
+  - **[P2 种子审计]** boards-seeds 测试 UTC 日期缺陷修复（`toISOString()` 在本地 0:00-7:59 取昨天 → 种子存活窗滞后一日）；近 21d 官方一手里程碑全已入账（ERNIE-5.5/Kimi K3.1 Pro/Muse/GPT-6 Cyber/LongCat-2.5/Cosmos 3），splitSeeds「报过即退役」语义下无合法可插种子，skip 态保留为维护信号（结论写入测试头注释）。
+  - **[P7 Poster 空图重试]** `shot.mjs renderHtmlToPng` 瞬态失败类（`POSTER_EMPTY_PNG`/`NOT_PNG`/`TRUNCATED_PNG`/`BAD_DIM`——Chrome 跑了但产物错，内存压力下第二次常成功）自动重试 1 次；结构失败（无 Chrome/尺寸非法/spawn 错）不重试。+3 测。
+  - **[P8 DEFAULT_LADDER 复盘]** 11 天 meta.ladder 实证：verify 236 票 94.9% 首档直出、exhausted 零；report 爬级仅 2/11 天且自愈出刊 → **维持 DEFAULT_LADDER 不动**（§12.1，观察项关闭）。
+  - **[P4 SKILL.md 解压]** 三大巨型单行段落（headless vs 手动 / 8-27 预抓数据流 / 可选 args / 9-13 账本）拆子标题 + 契约总表；skill-doc-contract 14/14 全绿（契约措辞零漂移）。
+  - **[P9 build.mjs IIFE 块级作用域改造]** `stripModule` 由「剥 export 后整文件平铺 inline」改为每模块包进 IIFE、导出面解构回 bundle 顶层——模块**私有**顶层标识符封闭在自身 IIFE 内，跨模块撞名（8/23 C1 事故：`tokenize` 撞车 → 宿主 new Function SyntaxError，node --check 假绿）**结构性不可能**，「同形函数必须异名」的人肉纪律退役（cluster/render-md/ledger 三套 tokenizer 保留各自词法名仅为 ESM 源可读性与测试锚点）。残留约束：各模块**导出面**不得重名（解构到顶层仍是重名 decl）——syntaxGate 的 node --check 必然响亮失败，不静默；单行多导出 `export const A = 1, B = 2` 形态不支持（新增模块须知）。产物级证据测试 +3（IIFE≥15/wmTokenize 私有名封闭/导出面解构在场）；全量 521 项 512 pass / 0 fail / 9 有意 skip + poster 55 + build 14 + skill-contract 14；产物 3680 行 `--sync-vault` 已同步。
+
+### 13.1 评估立项（未实现，仅结论）
+
+- **[P10 discover 接模型阶梯]** **结论：暂不做。** 数据：verify 票 94.9% 首档直出（§12.1），说明网关对普通代理的 TRANSIENT 率低；discover 现有韧性是 `BREAKER` 计数断路器 + harvest-fallback 兜底 + `discovery_recovered` 如实上报，8/31 生产风暴的教训是**快速跳闸换通道**（断路器）而非**原地换模型重试**——discover 每板独立、单板失败已有兜底救回通道，阶梯会引入「每板独立预算 vs 全程共享预算」的复杂度，收益（省下的兜底轮次）不抵成本。触发条件（满足才重开）：discover 代理连续多日大面积 TRANSIENT（`discovery_degraded` 常态化）且断路器跳闸后 static-fallback 兜底明显不足（`urls_discovered` 断崖）。
+- **[P11 Instagram 窗口缺口]** **结论：立项待评估，暂不排期。** 现状：10 板覆盖里无 Instagram 源（发现靠 grok-search/X/RSS/HF/linux.do），AI 实验室动态经 Instagram 首发的情况（如 Meta AI 官号）只能等二手媒体转报——窗口滞后约 1 天。评估要点：① IG 官方账号 RSS 桥（rsshub 等）可用性与稳定性；② 9222 登录态 CDP 抓 IG 的 ToS 风险与频率纪律（现纪律只覆盖 linux.do 公开 JSON API）；③ 实际增益（21d 内 IG 首发且未被他源覆盖的里程碑数——初步查账本为 0，二手媒体覆盖足够）。**在增益数据非零前不投入开发**；若出现 IG 独家首发漏报案例，从该案例起步设计最小通道。
 
 - **2026-10-03（第四轮 · 深度 review 根因修复）**：对第三轮做深度 review，八项全部根因修复：
   - **[P1-① 恢复路径从未接线]** `run-daily-win.sh`/`run-daily.sh` 此前只在 artifact-check——09-21 建的 `host-finalize.mjs`（编排器 422 死在 Write 前时从 completed `wf_*.json` 找回 payloads 落盘）从未被 Windows runner 调用（10-02 移植时从 Mac git 外 shim 丢掉该步）。现两 runner 都在 artifact-check **之前**跑 `host-finalize.mjs --date --out --since-epoch $WALL_START`；且 `host-finalize` 的 `DEFAULT_PROJECTS` 旧版硬编码 Mac 会话名 → 改由 cwd 推导。

@@ -1,3 +1,7 @@
+// ⚠️ 11-11 P3 降级声明：本文件 7 条契约已全部移植到 run-daily-win.test.mjs（锁定仓内
+// run-daily-win.sh，Windows/CI 也跑）。Mac shim（~/.ai-daily/run-daily.sh）已不在生产链上，
+// 本文件仅在 Mac 宿主有该文件时才有意义——Windows/CI 恒 skip，历史断言保留作为 Mac parity
+// 备查。新契约请加到 run-daily-win.test.mjs，不要再扩本文件。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'

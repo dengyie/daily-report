@@ -183,9 +183,47 @@ const frontmatterLines = (meta, date, window) => {
   if (num(st.major_out) != null) statsParts.push('major_out:' + st.major_out)
   if (num(st.killed) != null) statsParts.push('killed:' + st.killed)
   if (num(st.urls_fetched) != null) statsParts.push('urls_fetched:' + st.urls_fetched)
+  // 11-11 AIHOT 可观测性：信源结构与合成质量计数进 frontmatter（旧报告无此字段则不渲染，向后兼容）。
+  if (num(st.t1_sources) != null) statsParts.push('t1_sources:' + st.t1_sources)
+  if (num(st.synth_body_hallucination) != null) statsParts.push('synth_body_hallucination:' + st.synth_body_hallucination)
   if (statsParts.length) L.push('stats: {' + statsParts.join(', ') + '}')
   L.push('---')
   return L
+}
+
+// 11-11 P5：漏斗/质量行纯函数化——完整版与降级版共用同一数据概览表（降级日也要有量化账）。
+// 输入 meta.stats（可缺/可空），返回 md 表行数组（不含表头）；无任何数字字段时返回 []。
+export const funnelLines = stats => {
+  const st = stats && typeof stats === 'object' ? stats : {}
+  const funnel = [
+    ['社区预抓帖', st.community_topics, 'linux.do 社区预抓帖子（登录态 CDP）'],
+    ['发现链接', st.urls_discovered, '全部板块发现的 URL 候选' + (typeof st.fetch_budget_dropped === 'number' && st.fetch_budget_dropped > 0 ? '（配额让位 ' + st.fetch_budget_dropped + ' 条未抓）' : '')],
+    ['抓取正文', st.urls_fetched, '进入配额、实际抓取的来源'],
+    ['提取声明', st.claims_extracted, '可证伪声明（含 quote）'],
+    ['核查确认', st.confirmed, '对抗式 2+1 票确认' + ((st.major_out || 0) ? '（另有 ' + st.major_out + ' 条窗口外·重大）' : '')],
+    ['否决', st.killed, '核查未通过'],
+    ['纳入正文', st.included, '合成后实际写入的条目'],
+    ['话题组', st.topic_groups, '同事件跨条合并的话题组'],
+  ].filter(r => typeof r[1] === 'number')
+  const quality = [
+    ['T1 一手源', st.t1_sources, typeof st.t2_sources === 'number' ? '官方一手域名条目（T2 媒体 ' + st.t2_sources + ' 条）' : '官方一手域名条目'],
+    ['事件热度 top', st.top_heat, '独立域名数 × 24h 半衰（当日头条热度）'],
+    ['回执复用', st.fetch_receipts_reused, '48h 内已抓 URL 跳重抓（节省配额）'],
+    ['幻觉正文替换', st.synth_body_hallucination, '合成正文凭空原子 → 替换为 claim 原文'],
+    ['ROUNDUP 簇', st.roundup_clusters, '汇总盘点类簇（热度 ×0.3 折价）'],
+  ].filter(r => typeof r[1] === 'number')
+  return [...funnel, ...quality]
+}
+
+const renderFunnelSection = (L, stats) => {
+  const rows = funnelLines(stats)
+  if (!rows.length) return
+  L.push('## 📊 数据概览')
+  L.push('')
+  L.push('| 阶段 | 数量 | 说明 |')
+  L.push('|---|---:|---|')
+  for (const [label, v, note] of rows) L.push('| ' + label + ' | ' + v + ' | ' + note + ' |')
+  L.push('')
 }
 
 // 完整版：report 代理产出 sections 后的确定性排版。
@@ -259,25 +297,9 @@ export const renderMarkdown = ({ date, window, report, coverage, windowMisses, d
   }
   // 10/03 对齐参考日报：数据概览漏斗表（meta.stats 扩展字段，确定性渲染；有漏斗字段才渲染）。
   // 链路：社区预抓帖 → 发现链接 → 抓取正文 → 提取声明 → 核查确认/否决 → 纳入正文 → 话题组。
+  // 11-11 P5：表行抽 funnelLines 共用（降级版同表），此处只调渲染。
   if (meta && meta.stats && typeof meta.stats === 'object') {
-    const funnel = [
-      ['社区预抓帖', st.community_topics, 'linux.do 社区预抓帖子（登录态 CDP）'],
-      ['发现链接', st.urls_discovered, '全部板块发现的 URL 候选'],
-      ['抓取正文', st.urls_fetched, '进入配额、实际抓取的来源'],
-      ['提取声明', st.claims_extracted, '可证伪声明（含 quote）'],
-      ['核查确认', st.confirmed, '对抗式 2+1 票确认' + ((st.major_out || 0) ? '（另有 ' + st.major_out + ' 条窗口外·重大）' : '')],
-      ['否决', st.killed, '核查未通过'],
-      ['纳入正文', st.included, '合成后实际写入的条目'],
-      ['话题组', st.topic_groups, '同事件跨条合并的话题组'],
-    ].filter(r => typeof r[1] === 'number')
-    if (funnel.length) {
-      L.push('## 📊 数据概览')
-      L.push('')
-      L.push('| 阶段 | 数量 | 说明 |')
-      L.push('|---|---:|---|')
-      for (const [label, v, note] of funnel) L.push('| ' + label + ' | ' + v + ' | ' + note + ' |')
-      L.push('')
-    }
+    renderFunnelSection(L, meta.stats)
   }
   // 层 1 去重：过滤已在 report.sections items 标题中出现的窗口外项（对齐降级版 D.3，2026-08-22）。
   const majFromSections = (report.sections || []).flatMap(s => s.items || []).map(it => ({ claim: it.title }))
@@ -390,7 +412,7 @@ const dedupWindowMisses = (windowMisses, maj) => {
   })
 }
 
-export const renderDegradedMarkdown = ({ date, window, confirmed, refuted, coverage, windowMisses, degraded, noNewsCompanies, reportError, generated_by }) => {
+export const renderDegradedMarkdown = ({ date, window, confirmed, refuted, coverage, windowMisses, degraded, noNewsCompanies, reportError, generated_by, meta }) => {
   const S = s => String(s || '').replace(/\s+/g, ' ').trim()
   const voteTag = x => x.verifiedByVote ? '`✓' + (x.vote || '?') + '`' : '`◇' + (x.vote || '?') + '`'
   // 降级版来源形态为单 URL x.source（非数组），统一走 buildCitationMap 角标化（spec D.2）。
@@ -406,6 +428,8 @@ export const renderDegradedMarkdown = ({ date, window, confirmed, refuted, cover
   // 修 reportError 硬编码（spec D.1）：null/空不抹成 'report agent failed'，如实描述。
   const reason = reportError ? String(reportError).replace(/\s+/g, ' ').trim() : 'report 代理未产出完整版合成结构'
   const L = []
+  // 11-11 P5：降级版同渲染完整版 frontmatter（meta 可选，旧调用无 meta 则无 frontmatter，向后兼容）。
+  for (const fl of frontmatterLines(meta, date, window)) L.push(fl)
   L.push('# 🤖 AI 日报 · ' + date)
   L.push('')
   L.push('> 覆盖 ' + window + ' 窗口 · 生成器 ai-daily（' + modelFromMeta({ generated_by }) + '）' + (degraded && degraded.length ? ' · 降级标记：`' + degraded.join('`、`') + '`' : ''))
@@ -414,6 +438,10 @@ export const renderDegradedMarkdown = ({ date, window, confirmed, refuted, cover
   L.push('')
   L.push('降级原因：' + reason + '。以下内容依核查结果逐条拼合，无合成代理润色编排。')
   L.push('')
+  // 11-11 P5：降级日量化账——discover/fetch/verify 各阶段的数字如实入表（report 死了不等于管道没跑）。
+  if (meta && meta.stats && typeof meta.stats === 'object') {
+    renderFunnelSection(L, meta.stats)
+  }
   L.push('### 窗口内新闻（' + inW.length + ' 条，对抗式核查确认）')
   L.push('')
   for (const x of inW) {

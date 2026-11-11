@@ -136,6 +136,23 @@ test('降级版：空数据不崩（边界）', () => {
   assert.ok(md.includes('| 板块 | 标题 |'))
 })
 
+// 11-11 P5：降级日量化账——report 死了不等于管道没跑，discover/fetch/verify 数字如实入表。
+test('降级版：meta.stats → 数据概览表 + frontmatter；无 meta 则都不渲染（向后兼容）', () => {
+  const md = renderDegradedMarkdown({
+    date: 'd', window: 'w', confirmed: [], refuted: [], coverage: [], windowMisses: [], degraded: [], noNewsCompanies: [],
+    meta: { date: 'd', window: 'w', generated_by: 'ai-daily (x)', stats: { confirmed: 12, killed: 2, urls_discovered: 45, urls_fetched: 13, t1_sources: 8 } },
+  })
+  assert.ok(md.includes('## 📊 数据概览'), '降级版渲染漏斗表')
+  assert.ok(md.includes('| 发现链接 | 45 |'), 'discover 计数在场（report 死了管道数字不丢）')
+  assert.ok(md.includes('| 核查确认 | 12 |'), 'verify 计数在场')
+  assert.ok(md.includes('| T1 一手源 | 8 |'), 'AIHOT 质量行同表')
+  assert.ok(md.startsWith('---\n'), '降级版带 frontmatter')
+  assert.match(md, /stats: \{[^}]*confirmed:12/, 'frontmatter stats 在场')
+  const noMeta = renderDegradedMarkdown({ date: 'd', window: 'w', confirmed: [], refuted: [], coverage: [], windowMisses: [], degraded: [], noNewsCompanies: [] })
+  assert.ok(!noMeta.includes('数据概览'), '无 meta 不渲染漏斗（旧调用兼容）')
+  assert.ok(!noMeta.startsWith('---'), '无 meta 无 frontmatter')
+})
+
 // ─── 2026-08-22 风格优化（spec 2026-08-22-ai-daily-report-style-design.md）───
 
 test('buildCitationMap：跨 section 按首次出现序编号、URL href 去重、非 URL 跳过', () => {
@@ -688,6 +705,33 @@ test('完整版：meta.stats 漏斗字段 → 「## 📊 数据概览」表；�
   const oldMeta = { date: 'd', window: 'w', stats: { confirmed: 3, killed: 0, urls_fetched: 3 }, generated_by: 'ai-daily (x)' }
   const noF = renderMarkdown({ date: 'd', window: 'w', report: baseReport, coverage: [], windowMisses: [], degraded: [], meta: oldMeta })
   assert.ok(!noF.includes('| 社区预抓帖 |'), '旧 meta 不出新增漏斗行')
+})
+
+// 11-11 P1：AIHOT 质量/信源结构行（t1/t2 分层、热度、回执复用、幻觉替换、roundup）上表闭环。
+test('完整版：meta.stats AIHOT 字段 → 数据概览表质量行；缺字段行不渲染、旧 meta 全不渲染', () => {
+  const meta = { date: 'd', window: 'w', stats: { confirmed: 30, urls_fetched: 12, t1_sources: 8, t2_sources: 17, top_heat: 6.4, fetch_receipts_reused: 3, synth_body_hallucination: 8, roundup_clusters: 2 }, generated_by: 'ai-daily (x)' }
+  const md = renderMarkdown({ date: 'd', window: 'w', report: baseReport, coverage: [], windowMisses: [], degraded: [], meta })
+  assert.ok(md.includes('| T1 一手源 | 8 | 官方一手域名条目（T2 媒体 17 条） |'), 'T1 行带 T2 计数')
+  assert.ok(md.includes('| 事件热度 top | 6.4 |'), '热度行')
+  assert.ok(md.includes('| 回执复用 | 3 |'), '回执复用行')
+  assert.ok(md.includes('| 幻觉正文替换 | 8 |'), '幻觉替换行')
+  assert.ok(md.includes('| ROUNDUP 簇 | 2 |'), 'roundup 行')
+  // 缺 t2_sources → T1 说明退回不带 T2 的文案；缺 roundup → 该行不渲染
+  const partial = renderMarkdown({ date: 'd', window: 'w', report: baseReport, coverage: [], windowMisses: [], degraded: [], meta: { date: 'd', window: 'w', stats: { confirmed: 1, t1_sources: 1 } } })
+  assert.ok(partial.includes('| T1 一手源 | 1 | 官方一手域名条目 |'), '无 t2 时说明退回')
+  assert.ok(!partial.includes('ROUNDUP'), '缺 roundup 不渲染该行')
+  const oldMeta = renderMarkdown({ date: 'd', window: 'w', report: baseReport, coverage: [], windowMisses: [], degraded: [], meta: { date: 'd', window: 'w', stats: { confirmed: 1, urls_fetched: 1 } } })
+  assert.ok(!oldMeta.includes('T1 一手源'), '旧 meta 不出质量行')
+})
+
+// 11-11 P1：frontmatter stats 扩展——t1_sources / synth_body_hallucination 进元数据。
+test('完整版：frontmatter stats 带 t1_sources 与 synth_body_hallucination；旧 meta 不带', () => {
+  const meta = { date: 'd', window: 'w', stats: { confirmed: 12, killed: 0, urls_fetched: 12, t1_sources: 8, synth_body_hallucination: 8 }, generated_by: 'ai-daily (x)' }
+  const md = renderMarkdown({ date: 'd', window: 'w', report: baseReport, coverage: [], windowMisses: [], degraded: [], meta })
+  assert.match(md, /stats: \{[^}]*t1_sources:8/, 'frontmatter 含 t1_sources')
+  assert.match(md, /stats: \{[^}]*synth_body_hallucination:8/, 'frontmatter 含幻觉替换数')
+  const oldMd = renderMarkdown({ date: 'd', window: 'w', report: baseReport, coverage: [], windowMisses: [], degraded: [], meta: { date: 'd', window: 'w', stats: { confirmed: 12, urls_fetched: 12 } } })
+  assert.ok(!oldMd.includes('t1_sources:'), '旧 meta frontmatter 不含 t1_sources')
 })
 
 test('完整版：trend 存在 → 「## 🧭 今日技术趋势」收尾（开放问题之后、覆盖自检之前）；不存在不渲染', () => {

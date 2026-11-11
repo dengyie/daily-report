@@ -62,8 +62,62 @@ test('Windows runner：编排器韧性阶梯在场（探针/重拉/通知/快死
   assert.match(sh, /REPORT-EXISTS/, '产物落盘即成功判定在场')
   assert.match(sh, /RELAUNCH-SKIP/, '非快死失败不重拉的护栏在场')
   assert.match(sh, /probe-exhausted/, '探针全失败的退出记账在场')
+  assert.match(sh, /REPORT-EXISTS/, '产物落盘即成功判定在场（原 shim P0-1 契约，11-11 移植）')
   assert.match(sh, /notify\(\)/, '通知函数在场（Windows toast，失败回落纯日志）')
   assert.match(sh, /toast-fallback-log/, 'toast 失败回落日志兜底在场')
+})
+
+// ─── 11-11 P3：Mac shim 7 条 runner 契约移植收口 ───
+// run-daily-shim.test.mjs 只在 Mac 宿主（~/.ai-daily/run-daily.sh 在场）才跑，Windows/CI 恒 skip，
+// 7 条契约在生产 runner 上长期零覆盖。以下把仍适用于 Windows runner 的断言落到仓内源文件。
+
+// 原 shim 测 4（探针质量）：探针必须工具调用类、认三种失败态、模型走 attempt 档；launch 不钉死单一模型。
+test('Windows runner：探针与 launch 模型跟随 attempt 档，探针认 11128/channel/API Error 三失败态', () => {
+  const sh = win()
+  const probeFn = sh.match(/probe_gateway\(\) \{[\s\S]*?\n\}/)
+  assert.ok(probeFn, 'probe_gateway 函数体可抽取')
+  const probe = probeFn[0]
+  assert.doesNotMatch(probe, /Reply with exactly: OK/, '短问答 OK 探针会在 chat 200 / tools 400 时假阳性放行（09-13 实证）')
+  assert.match(probe, /dangerously-skip-permissions/, '探针须带与 launch 相同的 skip-permissions（工具路径）')
+  assert.match(probe, /unapproved channel/, '探针须把渠道拦截当失败')
+  assert.match(probe, /API Error/, '探针须把 API Error 当失败')
+  assert.match(probe, /11128/, '探针须把 CPA 官方渠道码 11128 当失败')
+  assert.match(probe, /--model "\$model"/, '探针模型须走本次 attempt 的 $model')
+  const launchLine = sh.split('\n').find(l => /运行 ai-daily skill/.test(l))
+  assert.ok(launchLine, '主 launch 行在场')
+  assert.match(launchLine, /--model "\$MODEL"/, '主 launch 模型须走本次 attempt 的 $MODEL')
+  assert.doesNotMatch(launchLine, /--model (gemini|deepseek|grok|claude)/, '主 launch 不得钉死单一模型（抽签失败后必须能换级）')
+})
+
+// 原 shim 测 5（编排器阶梯）：ORCH_LADDER 有序在场 + 换级日志 + 循环遍历。顺序为 Windows 当前
+// 生产决策（11-01 用户指令移除 claude 档），锁定顺序防静默漂移；改阶梯时须同更本断言。
+test('Windows runner：ORCH_LADDER 阶梯在场（gemini-3.8 主写 → deepseek → grok，无 claude 档）', () => {
+  const sh = win()
+  const ladder = sh.match(/ORCH_LADDER=\(([^)]+)\)/)
+  assert.ok(ladder, 'ORCH_LADDER 数组在场')
+  const models = ladder[1].trim().split(/\s+/)
+  assert.deepEqual(
+    models,
+    ['gemini-3.8-flash', 'deepseek-v4-flash', 'grok-4.6'],
+    '编排器阶梯须与 11-01 生产决策一致：gemini-3.8 主写，deepseek 兜底，grok 末位',
+  )
+  assert.doesNotMatch(sh, /ORCH_LADDER=\([^)]*claude/, '11-01 用户指令：阶梯不含 claude 档（串会话双雷）')
+  assert.match(sh, /DEEPSEEK_TRIES=3/, 'DeepSeek 同档重试次数在场')
+  assert.match(sh, /FALLBACK_TRIES=2/, '降级模型每档重试在场')
+  assert.match(sh, /TRIES="\$DEEPSEEK_TRIES"/, '首档重试接 DEEPSEEK_TRIES')
+  assert.match(sh, /TRIES="\$FALLBACK_TRIES"/, '后续档重试接 FALLBACK_TRIES')
+  assert.match(sh, /MODEL-FALLBACK/, '换级须打日志，便于次日审计')
+  assert.match(sh, /for MODEL in "\$\{ORCH_LADDER\[@\]\}"/, 'launch 循环须遍历阶梯而不是固定同模型')
+})
+
+// 原 shim 测 6（子代理跟档 + 渠道快切）：子代理模型跟随当前档、连续 11128 快换档、LAUNCH_OUT 捕获。
+test('Windows runner：子代理跟当前档模型，连续 11128 快切换档，LAUNCH_OUT 有捕获', () => {
+  const sh = win()
+  assert.match(sh, /export CLAUDE_CODE_SUBAGENT_MODEL="\$MODEL"/, 'harvest/discover/fetch 须跟本次 launch 档，不得钉死环境模型')
+  assert.match(sh, /CHANNEL_FAIL_MAX=2/, '同档连续渠道拦截上限在场')
+  assert.match(sh, /CHANNEL-FAIL/, '11128 快死须记账')
+  assert.match(sh, /CHANNEL-FAIL-SKIP/, '连抽两次坏渠道须跳档，不得把首档 TRIES 打满')
+  assert.match(sh, /LAUNCH_OUT=/, '须捕获 launch 输出才能认 11128，不能只看 rc')
 })
 
 test('Windows runner：HOST-FINALIZE 必须在 artifact-check 之前（09-20 422 空盘兜底）', () => {
