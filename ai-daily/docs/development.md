@@ -236,6 +236,13 @@ meta.json 另有 `ledger_recorded`（recorded/skipped/failed，finalize 回写�
 
 ## 13. 变更记录
 
+- **2026-11-11（11-11 晨间自然 run 验收 + 三根修 · `c5ffbcd`）**：08:40 bake 首战自然 run **rc=0**（46m43s，confirmed=16/urls 25/46，10 板全覆盖零 degraded 板块）——host-inject bake 通道生产首验通过（`ledger_injected:224`、无 `ledger_unavailable`、记账 16 条、P1 质量行全部渲染）。验收抓到并根修三问题：
+  - **[P1·回归 P6 stats 引用]** P6 抓取率门引用了未定义的 `stats` 变量（stats 只内联进 meta 字面量，门位置在 meta 之前）→ realm ReferenceError，后处理崩溃；子代理以 `sources.length` 临时恢复落盘（未改 bundle 原文件，产物如实）。根修：门取数内联同口径（`sources.length` / `discoverRows.reduce`，与 meta.stats 逐字同源）+ 契约测试 3 断言锁死「不得引用 stats 变量」。
+  - **[P1·prefetch 瞬态重试]** 11-02/09/10/11 晨 08:40 连续四天 prefetch 一次性失败（`empty_pages`/`fetch failed`/`prefetch_failed` 三形态）而手动复跑全 OK——晨间 9222 Chrome 抖动属瞬态，原实现一次失败即 `ok:false` 落定（社区信源断供整天）。`runPrefetch` 瞬态类重试 2 次（3s/8s 退避）；`empty_posts`（全噪声，确定性）豁免；连带修复 `prefetchLinuxDo` 失败 reason 归因（抓到页但 posts 空时误标 empty_posts）。
+  - **[数据·11-02 补账]** 11-02 出刊 `recorded_count=5` 但账本 0 条——10-31 覆盖事故连带损失（11-10 重建脚本 DAYS 硬编码漏 11-02），非 finalize 记账断层（meta 实证当天记账路径正常）。按 11-10 同口径补账 5 条（makeLedgerEntry + normURL 去重 + `isJunkClaim`），账本 224→229，`parseReportedLedger` 消费端验证通过（备份 `.bak-20261111-rebuild`）。11-03/04 rc=1 无产物，真实无账可记。
+  - **[观察·task.err.log]** syntax error 三条为 11-01 01:09 编辑窗口期历史残留（mtime + git 历史实证），当前 runner `bash -n` OK + 13/13 契约绿，非现行缺陷。
+  - 全量 **524 项 515 pass / 0 fail / 9 有意 skip**；产物 3683 行 `--sync-vault` 已同步（重建后已重 bake）。
+
 - **2026-11-11（P 系列优化批 · 12 项清偿）**：11-10 注入链四连事故根治（host-inject bake，`5f7de38`）后的优化迭代，Explore 全仓 survey → 12 项分优先级执行：
   - **[P1 AIHOT 可观测性闭环]** `render-md.mjs` 漏斗表增质量/信源结构行（`t1_sources`/`t2_sources`/`top_heat`/`fetch_receipts_reused`/`synth_body_hallucination`/`roundup_clusters`——此前 meta.stats 已算 6 字段但从不渲染，读者看不见）；frontmatter stats 增 `t1_sources` + `synth_body_hallucination`；SKILL 第 5 步汇报清单同步。
   - **[P5 降级日量化账]** `renderDegradedMarkdown` 增可选 `meta`：降级版同渲染 frontmatter + 数据概览漏斗表（report 死了不等于 discover/fetch/verify 管道没跑，数字如实入表）；表行抽 `funnelLines` 纯函数完整版/降级版共用。
