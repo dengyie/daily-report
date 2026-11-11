@@ -172,29 +172,32 @@ fi
   # 11-07 墙钟根因 + 用户路由指令：模型请求一律 EasyTier mesh 直连网关
   # （tebi new-api :3000，无 CF 层）——api.mangoqwq.com 的 Cloudflare 代理读超时
   # 120s 曾硬掐长 agentic 请求（11-05/06/07 晨间各 1~3 次 504/524，墙钟 68~209min）。
-  # 路由决策：curl /api/status 200 → probe_gateway CLI 级真探针复核（同 ORCH_LADDER[0]
-  # 同路由）→ 双过走直连（--settings 进程级覆盖 ANTHROPIC_BASE_URL）；任一步失败
-  # **显式覆盖回 CF 域名**（全局 settings.json 现默认直连——清空 flag 会带病继承，
-  # 必须反向覆盖才构成真回退）。探针与 launch 永远同路由。web/CDP 流量不受影响。
+  # 路由决策（2026-11-12 mesh-first 对齐，移除 CF 回退常量）：curl /api/status 200
+  # → probe_gateway CLI 级真探针复核（同 ORCH_LADDER[0] 同路由）→ 双过走直连
+  # （--settings 进程级覆盖 ANTHROPIC_BASE_URL）；任一步失败 = notify + 当日中止
+  # （不空拉，次日幂等重试），与 [[EasyTier 手册 §9.6]]「无运行时自动降级」一致，
+  # 人工回退走 C:\Users\mango\.config\mesh\rollback-home-win-meshfirst.md。
+  # 探针与 launch 永远同路由。web/CDP 流量不受影响。
   # 残余风险（明示接受）：run 中途 EasyTier 断 → 当日失败+toast，次日幂等重试。
   GATEWAY_DIRECT_URL="http://10.144.144.32:3000"
-  GATEWAY_CF_URL="https://api.mangoqwq.com"
   CLAUDE_SETTINGS_FLAG=()
   GW_CODE="$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 4 --max-time 6 "$GATEWAY_DIRECT_URL/api/status" 2>/dev/null)"
   if [ "$GW_CODE" = "200" ]; then
     # 纪律：先挂直连 flag 再探针——probe_gateway 必须与即将 launch 的路由同路由；
     # 8fb6982 首版把 probe 放在赋值前（空 flag 探的是 settings.json 继承路由），
-    # 回滚场景（settings=CF）下会「探针放行 CF、launch 裸奔直连」，烟测复查抓出。
+    # 烟测复查抓出后改为先 flag 后探针。
     CLAUDE_SETTINGS_FLAG=(--settings "{\"env\":{\"ANTHROPIC_BASE_URL\":\"$GATEWAY_DIRECT_URL\"}}")
     if probe_gateway "${ORCH_LADDER[0]}"; then
       echo "GATEWAY-ROUTE direct=$GATEWAY_DIRECT_URL（curl+CLI 双探针通过，EasyTier 直连）"
     else
-      CLAUDE_SETTINGS_FLAG=(--settings "{\"env\":{\"ANTHROPIC_BASE_URL\":\"$GATEWAY_CF_URL\"}}")
-      echo "GATEWAY-ROUTE cf-fallback=$GATEWAY_CF_URL（直连 curl 通但 CLI 探针失败，显式回退 CF 域名）"
+      notify "日报未生成 $TODAY" "GATEWAY-ROUTE ABORT：直连 curl 通但 CLI 探针失败（mesh-first 不回退 CF）"
+      echo "GATEWAY-ROUTE ABORT（直连 curl 通但 CLI 探针失败；2026-11-12 mesh-first：不回退 CF，当日放弃，次日幂等重试）"
+      exit 1
     fi
   else
-    CLAUDE_SETTINGS_FLAG=(--settings "{\"env\":{\"ANTHROPIC_BASE_URL\":\"$GATEWAY_CF_URL\"}}")
-    echo "GATEWAY-ROUTE cf-fallback=$GATEWAY_CF_URL（直连 curl code=${GW_CODE:-n/a}，显式回退 CF 域名）"
+    notify "日报未生成 $TODAY" "GATEWAY-ROUTE ABORT：mesh 直连 curl code=${GW_CODE:-n/a}（mesh-first 不回退 CF）"
+    echo "GATEWAY-ROUTE ABORT（mesh 直连 curl code=${GW_CODE:-n/a}；2026-11-12 mesh-first：不回退 CF，当日放弃，次日幂等重试）"
+    exit 1
   fi
 
   # 11-10 账本注入副本隔离（10-31 补跑覆盖事故根修）：subagent 拿到主账本路径后

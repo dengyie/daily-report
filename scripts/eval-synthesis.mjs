@@ -134,7 +134,7 @@ if (isMain) {
     process.exit(2);
   }
   const apiKey = process.env.GROK_API_KEY;
-  const apiUrl = process.env.GROK_API_URL || "https://api.mangoqwq.com/v1";
+  const apiUrl = process.env.GROK_API_URL || "http://10.144.144.32:3000/v1";
   if (!apiKey && !args.bootstrap) { console.error("缺 GROK_API_KEY（.env）"); process.exit(2); }
 
   const all = collectSamples(args.from, args.to);
