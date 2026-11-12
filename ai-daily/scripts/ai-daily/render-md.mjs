@@ -75,30 +75,57 @@ export const extractSynthAtoms = text => {
 const _goldAtomsOf = confirmed => {
   const gold = new Set()
   for (const c of confirmed || []) {
-    for (const t of [c.claim, c.quote, c.title, c.sourceUrl]) {
+    for (const t of [c.claim, c.quote, c.title, c.sourceUrl || c.source]) {
       if (!t) continue
       for (const a of extractSynthAtoms(t)) gold.add(a)
     }
   }
   return gold
 }
-// 审计并原位修复 report（mutate items[].summary）。返回 { replaced, atoms, samples }。
+// 11-12 根修（11-11 成品三处漏网实证）：extractSynthAtoms 只提拉丁词/数字原子，**编码损坏
+// 与无关短语插入完全在盲区**——「吞吐�� x86」（FFFD，抓取源干净、合成时引入）、「工作巟。」
+// （生僻字原子）、「5 倍批发契约合约条款第 7 条」（无关短语混入）全部穿过原子门进正文。
+// 确定性乱码门（零模型裁判，同哲学）：summary 含任一破损形状 → 有对应 claim 则整段替换为
+// claim 原文，无 claim 则只计数。**小而准**口径（11-12 误杀实测收敛，见 ③ 注）：
+//   ① U+FFFD 替换符（任何位置）——零误杀
+//   ② CJK 扩展区：Ext-A（U+3400–4DBF）、兼容区（U+F900–FAFF）、私有区（U+E000–F8FF）
+//      ——正常新闻语料不用这些区，误杀≈0
+//   ③ 常用区金标外生僻字（巟=U+5DDF 类）：**误杀实测不可行**——金标是压缩改写语料，
+//      正常同义改写用字（'准确率' vs 金标'成功率'）即触发。常用区无静态高频字表可依，
+//      该形状不实现；作为替代观测，原子门 samples 日志已含 samples 首条
+//   ④ 无关短语插入（如「批发契约合约条款第 7 条」）：中英正常 token 搭配判定误杀率高，
+//      同 ③ 不实现，留待原子门数据积累后再定形状。
+const _RARE_CJK_RE = /[\u3400-\u4dbf\uf900-\ufaff\ue000-\uf8ff]/
+const synthMojibakeHit = summary => {
+  const s = String(summary || '')
+  if (s.includes('\ufffd')) return 'FFFD'
+  if (_RARE_CJK_RE.test(s)) return 'RARE_CJK'
+  return null
+}
+// 审计并原位修复 report（mutate items[].summary）。返回 { replaced, atoms, samples, mojibake }。
 export const auditReportBodies = (report, confirmed) => {
-  const res = { replaced: 0, atoms: 0, samples: [] }
+  const res = { replaced: 0, atoms: 0, samples: [], mojibake: 0 }
   if (!report || !Array.isArray(report.sections)) return res
   const gold = _goldAtomsOf(confirmed)
   if (!gold.size) return res
   for (const sec of report.sections) {
     for (const it of (sec && sec.items) || []) {
       if (!it || typeof it.summary !== 'string' || !it.summary) continue
+      // 乱码门先行：编码损坏与原子门正交，命中即整段不可信 → 有 claim 则替换
+      const bad = synthMojibakeHit(it.summary)
       const miss = [...extractSynthAtoms(it.summary)].filter(a => !gold.has(a))
-      if (!miss.length) continue
-      res.atoms += miss.length
-      const claim = (confirmed || []).find(c => (it.sources || []).some(u => normURL(u) && normURL(u) === normURL(c.sourceUrl)))
-      if (claim && claim.claim) {
-        it.summary = claim.claim
-        res.replaced++
-        if (res.samples.length < 5) res.samples.push(String(it.title || '').slice(0, 40) + ' ← [' + miss.slice(0, 4).join(',') + ']')
+      if (bad || miss.length) {
+        res.atoms += miss.length
+        if (bad) res.mojibake++
+        // 11-12 防御：template 内存结构是 sourceUrl（L993 confirmed），finalize 落盘形变为
+        // source（L1330 映射）——双字段兼容，测试/未来调用方传落盘结构时替换路径不再静默失配
+        //（11-11 用真实落盘 JSON 端到端验证时实锤：find 永远 undefined → res.replaced=0）。
+        const claim = (confirmed || []).find(c => (it.sources || []).some(u => normURL(u) && normURL(u) === normURL(c.sourceUrl || c.source)))
+        if (claim && claim.claim) {
+          it.summary = claim.claim
+          res.replaced++
+          if (res.samples.length < 5) res.samples.push(String(it.title || '').slice(0, 40) + ' ← [' + (bad || '') + (bad && miss.length ? ';' : '') + miss.slice(0, 4).join(',') + ']')
+        }
       }
       // 无对应 claim：保留原文只计数（无可靠替换源，不编造 fallback）
     }
@@ -381,6 +408,15 @@ const wmNearDup = (a, b, minAscii) => {
   if (na === nb) return true
   if (na.length >= 8 && nb.includes(na)) return true
   if (nb.length >= 8 && na.includes(nb)) return true
+  // 11-12 根修（11-11「基元律动」漏网实证）：短名（<8 字）包含判定被长度门槛整体排除，
+  // 而 CJK bigram 共享 ≥4 对 3 字短名（最多贡献 2 个有效 bigram）不可达——纯中文短专名
+  // 作长名子串时永远折不进。补：包含关系成立且短名去停用 bigram 后仍有实质 token → 折叠
+  //（防误杀：单字/纯停用 bigram 的泛称如「发布」「模型」不折）。
+  if (nb.includes(na) || na.includes(nb)) {
+    const short = na.length <= nb.length ? na : nb
+    const substance = wmTokenize(short).filter(t => WM_CJK_RE.test(t) ? true : t.length >= 3)
+    if (substance.length >= 2) return true
+  }
   const ta = new Set(wmTokenize(na))
   const tb = new Set(wmTokenize(nb))
   let asciiShared = 0, cjkShared = 0

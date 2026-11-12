@@ -743,3 +743,35 @@ test('完整版：trend 存在 → 「## 🧭 今日技术趋势」收尾（开�
   const noTrend = renderMarkdown({ date: 'd', window: 'w', report: baseReport, coverage: [], windowMisses: [], degraded: [] })
   assert.ok(!noTrend.includes('## 🧭 今日技术趋势'), '无 trend 不渲染空骨架')
 })
+
+// ─── 11-12 根修：windowMisses 短名包含折叠（11-11「基元律动」漏网实证）───
+test('foldWindowMisses：短中文名（<8字）为长名子串且含实质 token → 折叠', async () => {
+  const { foldWindowMisses } = await import('../render-md.mjs')
+  const items = [
+    { name: '基元律动发布NeoHorse-1.5-Flash Preview', date: '2026-11-05', note: 'x' },
+    { name: '基元律动', date: '2026-11-05', note: 'y' },
+  ]
+  const folded = foldWindowMisses(items)
+  assert.equal(folded.length, 1, '短名被折进长名: ' + JSON.stringify(folded.map(i => i.name)))
+  assert.equal(folded[0].name, '基元律动发布NeoHorse-1.5-Flash Preview', '保留信息量大的长名')
+})
+
+test('foldWindowMisses：泛称短名不折叠（防误杀）', async () => {
+  const { foldWindowMisses } = await import('../render-md.mjs')
+  const items = [
+    { name: 'OpenAI 发布全新智能体产品线', date: '2026-11-05', note: 'x' },
+    { name: '发布', date: '2026-11-05', note: 'y' },
+  ]
+  const folded = foldWindowMisses(items)
+  assert.equal(folded.length, 2, '单字泛称（去停用 bigram 后无实质 token）不折叠: ' + JSON.stringify(folded.map(i => i.name)))
+})
+
+test('foldWindowMisses：不同公司短名互不为子串 → 不折叠（现有契约不回归）', async () => {
+  const { foldWindowMisses } = await import('../render-md.mjs')
+  const items = [
+    { name: 'MiniMax 开放 H3-Image 权重', date: '2026-11-05', note: 'x' },
+    { name: 'OpenAI', date: '2026-11-05', note: 'y' },
+  ]
+  const folded = foldWindowMisses(items)
+  assert.equal(folded.length, 2, '无包含关系不折叠')
+})

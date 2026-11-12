@@ -54,6 +54,48 @@ test('auditReportBodies：金标为空（无 confirmed）→ 零操作', () => {
   assert.equal(r.atoms, 0)
 })
 
+// ─── 11-12 根修：乱码门（11-11 成品三处漏网实证）───
+
+test('auditReportBodies 乱码门：FFFD → 整段替换为 claim 原文（11-11「吞吐�� x86」case）', () => {
+  const report = mkReport([{ summary: 'Agent 负载吞吐\ufffd\ufffd x86，宣称显著提升。', sources: ['https://huggingface.co/papers/2611.08449'] }])
+  const r = auditReportBodies(report, mkConfirmed())
+  assert.equal(r.mojibake, 1, 'FFFD 命中乱码门')
+  assert.equal(r.replaced, 1, '有对应 claim → 整段替换')
+  assert.ok(report.sections[0].items[0].summary.includes('VFlash'), '替换为 claim 原文')
+  assert.ok(!report.sections[0].items[0].summary.includes('\ufffd'))
+})
+
+test('auditReportBodies 乱码门：金标不含的常用区生僻字 → 替换（11-11「工作巟。」case）', () => {
+  // 11-12 设计收敛：常用区金标外单字判定误杀率实测不可行（金标是压缩改写，正常同义换词
+  // 即触发，如'准确率' vs 金标'成功率'）→ 巟类不拦，记录设计决策于 render-md.mjs 注释 ③。
+  // 本测试锁定：正常中文零误杀这一硬约束优先于覆盖生僻错字。
+  const report = mkReport([{ summary: 'VFlash 提速约 25 倍，准确率 70.2%。', sources: ['https://huggingface.co/papers/2611.08449'] }])
+  const r = auditReportBodies(report, mkConfirmed())
+  assert.equal(r.mojibake, 0, '同义换词（金标无「准」字）零误杀')
+  assert.equal(r.replaced, 0)
+})
+
+test('auditReportBodies 乱码门：CJK 扩展区/私有区字符 → 替换', () => {
+  const report = mkReport([
+    { summary: '该模型在测试中表现㐀㐁异常。', sources: ['https://huggingface.co/papers/2611.08449'] },   // 㐀=U+3400 Ext-A
+    { summary: 'Kimi K3.1 Pro 权重已开放。', sources: ['https://huggingface.co/moonshotai/K3.1-Pro'] },
+  ])
+  const r = auditReportBodies(report, mkConfirmed())
+  assert.equal(r.mojibake, 1, 'Ext-A 命中')
+  assert.equal(r.replaced, 1)
+  assert.ok(!report.sections[0].items[0].summary.includes('㐀'))
+})
+
+test('auditReportBodies 乱码门：金标含的 CJK 字不误杀（正常中文正文零操作）', () => {
+  const report = mkReport([
+    { summary: 'VFlash 提速约 25 倍，平均成功率 70.2%。', sources: ['https://huggingface.co/papers/2611.08449'] },
+    { summary: 'Moonshot 开源 Kimi K3.1 Pro 权重。', sources: ['https://huggingface.co/moonshotai/K3.1-Pro'] },
+  ])
+  const r = auditReportBodies(report, mkConfirmed())
+  assert.equal(r.mojibake, 0, '金标内的字全部放行')
+  assert.equal(r.replaced, 0, '正常中文条目零操作')
+})
+
 // ─── 11-10 P2-①（AIHOT 借鉴）：信源 tier ───
 
 test('sourceTier：官方一手域名 T1（含子域），媒体 T2，垃圾输入 T2', () => {
