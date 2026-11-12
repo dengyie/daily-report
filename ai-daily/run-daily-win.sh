@@ -187,11 +187,13 @@ fi
     # 8fb6982 首版把 probe 放在赋值前（空 flag 探的是 settings.json 继承路由），
     # 烟测复查抓出后改为先 flag 后探针。
     CLAUDE_SETTINGS_FLAG=(--settings "{\"env\":{\"ANTHROPIC_BASE_URL\":\"$GATEWAY_DIRECT_URL\"}}")
-    if probe_gateway "${ORCH_LADDER[0]}"; then
+    # 11-12 教训：此处曾单发一次 probe_gateway，网关上游 TTFT 抖动（504）偶发一击即弃 → 当日空转。
+    # 改走 probe_wait（PROBE_RETRY=3、间隔 PROBE_WAIT_S），launch 段同款纪律；网关偶发抖动靠重复请求消化。
+    if probe_wait "${ORCH_LADDER[0]}"; then
       echo "GATEWAY-ROUTE direct=$GATEWAY_DIRECT_URL（curl+CLI 双探针通过，EasyTier 直连）"
     else
-      notify "日报未生成 $TODAY" "GATEWAY-ROUTE ABORT：直连 curl 通但 CLI 探针失败（mesh-first 不回退 CF）"
-      echo "GATEWAY-ROUTE ABORT（直连 curl 通但 CLI 探针失败；2026-11-12 mesh-first：不回退 CF，当日放弃，次日幂等重试）"
+      notify "日报未生成 $TODAY" "GATEWAY-ROUTE ABORT：直连 curl 通但 CLI 探针 ${PROBE_RETRY} 连败（mesh-first 不回退 CF）"
+      echo "GATEWAY-ROUTE ABORT（直连 curl 通但 CLI 探针 ${PROBE_RETRY} 连败，末次 out: ${PROBE_LAST_OUT:-<empty>}；2026-11-12 mesh-first：不回退 CF，当日放弃，次日幂等重试）"
       exit 1
     fi
   else
