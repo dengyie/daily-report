@@ -236,6 +236,13 @@ meta.json 另有 `ledger_recorded`（recorded/skipped/failed，finalize 回写�
 
 ## 13. 变更记录
 
+- **2026-11-12（11-12 事故三修 · `19569a4`/`b936f8a`）**：08:40 定时 run `GATEWAY-ROUTE ABORT`（当日空转）+ 09:42 手动重跑验收，连环根修三件：
+  - **[runner·路由探针单发 `19569a4`]** 路由选择块只调一次 `probe_gateway`——gemini-3.8-flash 上游负载均衡 TTFT 抖动（504 `loadbalancer: time to first token timeout`，同请求 5s~91s 方差实测）一击即弃 → 当日放弃。debug 追踪另实锤并发问题：上游某渠道额度耗尽时 403 `insufficient_user_quota` 原样透传（"余额 $0.14" 实为**渠道级**余额，非用户钱包——用户侧确认无需充值）。根修：改走 launch 段同款 `probe_wait`（3 次重试 + 30s 间隔），渠道抖动靠重复请求消化；ABORT 消息带末次 `PROBE_LAST_OUT` 便于归因。网关侧需求（用户已提）：渠道 403 不透传、自动换渠道。
+  - **[render·合成乱码门 `b936f8a`]** 11-11 成品三处合成期漏网（`sources.json` 干净、成品正文污染）：FFFD×2（「吞吐�� x86」）、生僻错字（「工作巟。」U+5DDF）、无关短语插入（「5 倍批发契约合约条款第 7 条」——`synth_body_hallucination:5` 的漏网之鱼）。`extractSynthAtoms` 只提拉丁/数字原子，编码损坏完全在盲区。新增 `synthMojibakeHit` 确定性乱码门（FFFD + CJK Ext-A/兼容/私有区）→ 命中整段替换为 claim 原文。**误杀实测收敛**：常用区金标外单字判定不实现——金标是压缩改写语料，正常同义换词（'准确率' vs 金标'成功率'）即触发，误杀率不可接受；「批发契约」类搭配判定同样暂缓。小而准优先。
+  - **[render·windowMisses 短名折叠 `b936f8a`]** 11-11 窗口外参考「基元律动发布NeoHorse-1.5-Flash Preview」与「基元律动」同事件两行漏折——纯中文短名（<8 字）被 `includes` 长度门槛与 CJK bigram 共享门槛（3 字名最多 2 bigram < 4）双重排除。`wmNearDup` 补包含短路（去停用 bigram 后实质 token ≥2 才折，泛称不折防误杀）。
+  - **[render·auditReportBodies 落盘形变防御 `b936f8a`]** 端到端复现实锤：template 内存金标是 `c.sourceUrl`、finalize 落盘形变为 `c.source`——`auditReportBodies` 只认 sourceUrl，替换路径在落盘结构下**永远失配**（`res.replaced` 恒 0）。双字段兼容（`sourceUrl || source`）。
+  - 全量 **531 项 522 pass / 0 fail / 9 有意 skip**；产物 3719 行 `--sync-vault` 已同步。11-12 重跑 gemini 档慢死（1949s 无产物）→ 阶梯自动换档 deepseek-v4-flash 探针过，验证继续。
+
 - **2026-11-11（11-11 晨间自然 run 验收 + 三根修 · `c5ffbcd`）**：08:40 bake 首战自然 run **rc=0**（46m43s，confirmed=16/urls 25/46，10 板全覆盖零 degraded 板块）——host-inject bake 通道生产首验通过（`ledger_injected:224`、无 `ledger_unavailable`、记账 16 条、P1 质量行全部渲染）。验收抓到并根修三问题：
   - **[P1·回归 P6 stats 引用]** P6 抓取率门引用了未定义的 `stats` 变量（stats 只内联进 meta 字面量，门位置在 meta 之前）→ realm ReferenceError，后处理崩溃；子代理以 `sources.length` 临时恢复落盘（未改 bundle 原文件，产物如实）。根修：门取数内联同口径（`sources.length` / `discoverRows.reduce`，与 meta.stats 逐字同源）+ 契约测试 3 断言锁死「不得引用 stats 变量」。
   - **[P1·prefetch 瞬态重试]** 11-02/09/10/11 晨 08:40 连续四天 prefetch 一次性失败（`empty_pages`/`fetch failed`/`prefetch_failed` 三形态）而手动复跑全 OK——晨间 9222 Chrome 抖动属瞬态，原实现一次失败即 `ok:false` 落定（社区信源断供整天）。`runPrefetch` 瞬态类重试 2 次（3s/8s 退避）；`empty_posts`（全噪声，确定性）豁免；连带修复 `prefetchLinuxDo` 失败 reason 归因（抓到页但 posts 空时误标 empty_posts）。
