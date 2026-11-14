@@ -170,7 +170,9 @@ test('externalVerifyPrompt：必须找到外部独立证据 + 主路宿主 CLI�
   assert.match(s, /refuted=false 且 toolsUnavailable=true/, '工具不可用 → schema 字段 toolsUnavailable（9/19 review P2-2）')
   // 11-14 根修：主路 = 宿主 grok-search CLI（gateway 三方模型 WebSearch 是死通道，实测
   // server_tool_use=0、一次空壳一次自述无工具）；WebSearch 降级为可选辅路
-  assert.match(s, /scripts\/search\.js --days 7 --extra 4/, '主路宿主 CLI 在场（Tavily/Firecrawl/Exa 真实联网）')
+  // review P2-①：shell 无关形式（node 绝对路径）——子代理工具面只有 PowerShell，不支持 cd && ./
+  assert.match(s, /node .*\/scripts\/search\.js --days 7 --extra 4/, '主路宿主 CLI 在场且为 shell 无关 node 绝对路径形式')
+  assert.ok(!/&& \.\/scripts\/search\.js/.test(s), '禁用 bash 链式语法（PowerShell 5.1 不支持 &&）')
   assert.match(s, /sources\.items/, '只看 URL 卡片（answer.text 降级时不可信）')
   assert.match(s, /辅路·可选.*WebSearch/, 'WebSearch 降级为辅路')
   assert.match(s, /立即放弃辅路/, '辅路死通道不反复尝试')
@@ -178,12 +180,15 @@ test('externalVerifyPrompt：必须找到外部独立证据 + 主路宿主 CLI�
 })
 
 // ─── 11-14 票向先验（黄仁勋案缓解）───
-test('verifyPrompt：ledgerPrior 注入跨日先验行；无先验 prompt 不变', () => {
+test('verifyPrompt：ledgerPrior 注入跨日先验行；major 条目不谎称已核查（P2-③）；无先验 prompt 不变', () => {
   const base = { WINDOW_LABEL: 'w', REFUTATIONS_REQUIRED: 1, VOTES_PER_CLAIM: 2, WFROM: '2026-09-18', WTO: '2026-09-19' }
   const c = { claim: 'Nvidia 准备解雇ceo黄仁勋', sourceUrl: 'https://linux.do/t/1', sourceQuality: 'secondary', quote: 'q' }
-  const withPrior = verifyPrompt(c, { ...base, ledgerPrior: { day: '2026-11-13', url: 'https://x/1' } })
-  assert.match(withPrior, /已于 2026-11-13 核查通过并成稿/, '先验行在场（day 注入）')
-  assert.match(withPrior, /新增的、与已报道版本矛盾/, '先验仅压翻面，新增矛盾断言仍可否决')
+  const withPrior = verifyPrompt(c, { ...base, ledgerPrior: { day: '2026-11-13', url: 'https://x/1', major: false } })
+  assert.match(withPrior, /已于 2026-11-13 核查通过并成稿/, '先验行在场（day 注入，已核查措辞）')
+  // review P2-③：major=true 条目是未投票的行业公认事实，不得谎称「已核查」
+  const withMajor = verifyPrompt(c, { ...base, ledgerPrior: { day: '2026-11-13', url: 'https://x/1', major: true } })
+  assert.match(withMajor, /行业公认重大事实直接成稿（未走对抗核查）/, 'major 条目用成稿措辞（不冒充已核查）')
+  assert.ok(!/核查通过并成稿/.test(withMajor), 'major 条目不出现核查通过措辞')
   const without = verifyPrompt(c, base)
   assert.doesNotMatch(without, /跨日先验/, '无先验 → 清单 0 行不出现（首日报道保持默认怀疑）')
 })

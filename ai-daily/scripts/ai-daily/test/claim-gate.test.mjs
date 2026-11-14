@@ -123,7 +123,7 @@ test('gateClaims：分账不丢不改写（对象引用原样透传）', () => {
 // 非常规声明（组织级事件突变）是软文最爱的形态，仅靠内部一致性票无法识破——二手源命中即进
 // ext 抽查。机械可识别（动词+实体结构），宁滥勿漏（佐证票成本有界：每条 1 张 low-effort 票）。
 
-test('isExtraordinaryClaim：人事变动/并购/解散关闭/诉讼 四族正面形态', () => {
+test('isExtraordinaryClaim：人事变动/并购/解散关闭/诉讼处罚 四族正面形态', () => {
   const HIT = [
     'Nvidia 准备解雇ceo黄仁勋，CFO 克雷斯临时接任',       // 11-13 真 T1 头条（人事）
     'OpenAI 收购 AI 编程初创 Cursor',                     // 并购
@@ -131,6 +131,7 @@ test('isExtraordinaryClaim：人事变动/并购/解散关闭/诉讼 四族正�
     'Meta 遭美国司法部反垄断起诉',                        // 诉讼
     'OpenAI 解散其 AGI Readiness 团队',                   // 解散
     '孙鹏加入字节跳动出任产品负责人',                      // 11-13 账本实证条目（离职/加入族）
+    '某公司因数据违规被立案调查',                          // 强组合「立案调查」（11-14 review P2-②）
   ]
   for (const t of HIT) assert.equal(isExtraordinaryClaim({ claim: t }), true, JSON.stringify(t))
 })
@@ -142,6 +143,8 @@ test('isExtraordinaryClaim：常规发布/性能/融资声明不命中（ext 预
     '谷歌宣布自 2026 年 10 月起调整 Gemini 用量限额',
     'Gboard 已用基于 TEE 的联邦学习系统训练英语与日语下一词预测模型',
     '该模型推理吞吐提升 30%',
+    '调查显示 80% 开发者已在日常使用 AI 编码助手',         // 裸「调查」= survey 义，11-14 review P2-② 实证误报
+    '一项针对 2000 名用户的调查发现付费意愿下降',           // 同上（问卷高频形态）
     '',                                        // 空串防御
   ]
   for (const t of MISS) assert.equal(isExtraordinaryClaim({ claim: t }), false, JSON.stringify(t))

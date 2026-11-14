@@ -1233,7 +1233,11 @@ const externalVerifyPrompt = (c, ctx) =>
   // 11-14 根修：gateway 三方模型的 WebSearch 实为死通道（server_tool_use=0、返回空壳/自述无工具），
   // 改走宿主 grok-search CLI（Tavily/Firecrawl/Exa 真实联网，即使 Grok 上游 503 也降级出卡）+
   // WebFetch 打开独立来源确认。WebSearch 降级为可选尝试（部分 Anthropic 渠道仍可用）。
-  '1.【主路·必做】宿主搜索（真实联网，含 Tavily/Firecrawl/Exa 多通道）：cd ' + ctx.GROK_DIR + " && ./scripts/search.js --days 7 --extra 4 --source-chars 300 --max-chars 3000 '<声明中的实体+事件关键词，如：Thinking Machines Inkling 2 Small 594B 发布>'\n" +
+  '1.【主路·必做】宿主搜索（真实联网，含 Tavily/Firecrawl/Exa 多通道），命令原样照抄执行：\n' +
+  // 11-14 review P2-①：子代理工具面无 Bash 只有 PowerShell（转录取证），PowerShell 5.1 不支持
+  // 'cd X && ./y' 语法——命令必须是 shell 无关的单条 node 绝对路径形式（与 fetch 代理实际执行
+  // 'node <绝对路径>' 的成功形态一致，模型不必即兴改写）。
+  '   node ' + ctx.GROK_DIR + "/scripts/search.js --days 7 --extra 4 --source-chars 300 --max-chars 3000 '<声明中的实体+事件关键词，如：Thinking Machines Inkling 2 Small 594B 发布>'\n" +
   '   只看返回的 sources.items URL 卡片（provider/url/title/published_date/snippet）判断独立佐证；不看 answer.text（降级时 answer 只是原始摘录）。\n' +
   '2.【辅路·可选】如主路无果，最多 1 次 WebSearch + 1 次 WebFetch（打开最相关的结果页确认）。WebSearch 返回空结果或提示无工具 → 立即放弃辅路，勿反复尝试。\n' +
   '3. 判定：找到**至少一个独立来源**（域名非本来源、非转贴/镜像本来源的聚合页）支撑声明的核心事实 → refuted=false；搜索后无任何独立来源支撑、或找到相反证据、或该「事件」只在论坛/自媒体流转而无任何权威侧消息 → refuted=true。\n' +
@@ -1242,8 +1246,10 @@ const externalVerifyPrompt = (c, ctx) =>
 
 // verifyPrompt 需要 VOTES_PER_CLAIM/REFUTATIONS_REQUIRED，经 ctx 传入。
 // 11-14 票向先验（黄仁勋案缓解）：ctx.ledgerPrior 为账本命中条目（ledgerPriorFor，template 层
-// 按天缓存）时注入「本事件已于 N 天前核查并成稿」——同一事件跨日换 URL 重投，内部票不再因
-// 次要来源引语细节缺失翻面。null → 不注入（首日报道保持默认怀疑态度）。
+// 按天缓存）时注入——同一事件跨日换 URL 重投，内部票不再因次要来源引语细节缺失翻面。
+// 11-14 review P2-③：措辞区分条目性质——major=true 的账本条目是**未投票**的行业公认重大事实
+//（makeLedgerEntry major 位），不得谎称「已核查通过」；已核查条目才用核查措辞。
+// null → 不注入（首日报道保持默认怀疑态度）。
 const verifyPrompt = (c, ctx) => {
   const isPrimary = c && c.sourceQuality === 'primary'
   const defaultLine = isPrimary
@@ -1251,7 +1257,7 @@ const verifyPrompt = (c, ctx) => {
     : '默认 refuted=true，除非证据充分支撑。'
   const prior = ctx && ctx.ledgerPrior
   const priorLine = prior && prior.day
-    ? '\n0. **跨日先验**：本事件已于 ' + prior.day + ' 核查通过并成稿（账本命中）。换源重投不改变事件本身的核查结论——除非本声明包含**新增的、与已报道版本矛盾**的断言，勿仅因本来源引语/日期细节不及前源而翻面。\n'
+    ? '\n0. **跨日先验**：本事件已于 ' + prior.day + (prior.major ? ' 作为行业公认重大事实直接成稿（未走对抗核查）' : ' 核查通过并成稿（账本命中）') + '。换源重投不改变事件本身的既有结论——除非本声明包含**新增的、与已报道版本矛盾**的断言，勿仅因本来源引语/日期细节不及前源而翻面。\n'
     : ''
   return '## 对抗性核查票 ' + '(voter)\n\n' +
   '请对下列声明持怀疑态度，尝试证伪。≥' + ctx.REFUTATIONS_REQUIRED + '/' + ctx.VOTES_PER_CLAIM + ' 票证伪即否决。\n\n' +
@@ -2415,12 +2421,14 @@ const needsVerification = c => {
 }
 
 /** 非常规声明判定（11-14 external_check 目标扩展）：断言组织级事件突变——人事变动/并购/解散/
- *  关闭/诉讼/停服。这类「惊人事件」在二手源（非 primary）流转时是软文最爱的形态，仅靠内部
+ *  关闭/诉讼/处罚。这类「惊人事件」在二手源（非 primary）流转时是软文最爱的形态，仅靠内部
  *  一致性票（文本自洽）无法识破——需外部独立佐证票加防。机械可识别（动词+实体结构），宁滥勿漏：
- *  命中即进 ext 抽查候选，佐证票成本有界（每条 1 张 low-effort 票）。 */
+ *  命中即进 ext 抽查候选，佐证票成本有界（每条 1 张 low-effort 票）。
+ *  11-14 review P2-②：删裸「调查」——中文 survey/investigation 两义，「调查显示 80%…」问卷
+ *  形态是 AI 日报高频常规声明（live probe 实证误报），只留强组合「立案调查/刑事调查」。 */
 const isExtraordinaryClaim = c => {
   const t = (c && typeof c.claim === 'string') ? c.claim : ''
-  return /(?:人事|离职|跳槽|解雇|辞职|接任|卸任|罢免|复职)|(?:(?:收购|并购|合并|重组|出售|剥离)|(?:解散|倒闭|破产|关停|关闭|停运|下线|停止)|(?:起诉|诉讼|反垄断|罚款|调查))/.test(t)
+  return /(?:人事|离职|跳槽|解雇|辞职|接任|卸任|罢免|复职)|(?:(?:收购|并购|合并|重组|出售|剥离)|(?:解散|倒闭|破产|关停|关闭|停运|下线|停止)|(?:起诉|诉讼|反垄断|罚款|立案调查|刑事调查))/.test(t)
 }
 
 /** 批量分账：clean/dropped 两桶，对象引用原样透传（不改写不复制）。 */
