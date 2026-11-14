@@ -1383,15 +1383,41 @@ const synthMojibakeHit = summary => {
   if (_RARE_CJK_RE.test(s)) return 'RARE_CJK'
   return null
 }
-// 审计并原位修复 report（mutate items[].summary）。返回 { replaced, atoms, samples, mojibake }。
-const auditReportBodies = (report, confirmed) => {
-  const res = { replaced: 0, atoms: 0, samples: [], mojibake: 0 }
+// 审计并原位修复 report（mutate items[].summary / 未核查项 title）。返回 { replaced, atoms, samples, mojibake, titleFixed }。
+const auditReportBodies = (report, confirmed, unverified) => {
+  const res = { replaced: 0, atoms: 0, samples: [], mojibake: 0, titleFixed: 0 }
   if (!report || !Array.isArray(report.sections)) return res
   const gold = _goldAtomsOf(confirmed)
-  if (!gold.size) return res
+  // 注：title 门（下方 11-14 P2）不依赖金标——金标为空（confirmed=0）时 title 校验仍须工作
+  //（11-14 当日正是 confirmed 全 T1 但 unverified 4 条错位的形态）；原子门仍以 gold.size 守卫。
+  // 11-14 P2（待核实小节 title-claim 系统性错位实证）：unverified 池条目的 claim 由 verify
+  // 逐条记账，而 item.title 是 report 代理自拟——模型概括了 claim 的背景/关联事件而非 claim
+  // 本身（当日 4/4 错位：title 说 Orchestrator 配额、正文渲染 Hydrogen 定价原文）。确定性
+  // 防线（零模型裁判，与原子门同哲学）：title 的实体原子（拉丁词+数字）与 claim 原文原子
+  // 的交集为空 → title 不可信，弃用 claim 原文前缀作 title。只对未核查项生效——已核查项
+  // 有 vote 支撑且 title 错位风险已被 2-0 对抗流程间接约束，不扩口径。
+  const _uvByClaimText = new Map((unverified || []).map(c => [c.claim, c]))
   for (const sec of report.sections) {
     for (const it of (sec && sec.items) || []) {
+      if (!it) continue
+      // 11-14 P2：未核查项 title-claim 一致性门
+      if (it.title && typeof it.title === 'string' && isUncheckedStatus(it.status)) {
+        const claimText = typeof it.summary === 'string' ? it.summary : ''
+        const uv = _uvByClaimText.get(claimText) || (confirmed || []).find(c => claimText && claimText.includes(c.claim))
+        const src = uv || (confirmed || []).find(c => (it.sources || []).some(u => normURL(u) && normURL(u) === normURL(c.sourceUrl || c.source)))
+        if (src && src.claim) {
+          const tAtoms = extractSynthAtoms(it.title)
+          const cAtoms = extractSynthAtoms(src.claim)
+          const overlap = [...tAtoms].filter(a => cAtoms.has(a)).length
+          if (tAtoms.size > 0 && overlap === 0) {
+            it.title = src.claim.slice(0, 30) + (src.claim.length > 30 ? '…' : '')
+            res.titleFixed++
+            if (res.samples.length < 8) res.samples.push('TITLE←claim ' + String(src.claim).slice(0, 30))
+          }
+        }
+      }
       if (!it || typeof it.summary !== 'string' || !it.summary) continue
+      if (!gold.size) continue  // 金标为空（无 confirmed）→ 原子门/乱码门零操作（title 门上方已独立跑过）
       // 乱码门先行：编码损坏与原子门正交，命中即整段不可信 → 有 claim 则替换
       const bad = synthMojibakeHit(it.summary)
       const miss = [...extractSynthAtoms(it.summary)].filter(a => !gold.has(a))
@@ -2322,12 +2348,21 @@ const JUNK_RES = [
   /^\d+(\.\d+)?\s*(KB|MB|GB)\b/i,                      // 纯大小串开头
   /(^|\s)image\s+\d+[×xX]\d+\s+\d+(\.\d+)?\s*(KB|MB)\b/i,  // 内嵌附件标注（"如图： image 487×438 13.4 KB …"）
   /^如图[：:，,]?\s*(image|$)/i,                        // 「如图」图片说明碎片——收窄到紧跟附件标注或到此为止，
-                                                       // 防误杀「如图 3 所示，营收增长 30%」（设计 §5）
+                                                       // 防误杀「如图 3 所示，营收增长 30%」（设计 §5；「如图所示」
+                                                       // 11-14 独立成模式，见下）
   // ── 11-13：裸文件名开头的附件标注（无 'image ' 前缀形态），后跟评论残片不影响判定
   //   （'IMG_4628 1290×621 108 KB 不会真的是…'——文件名开头即机械可识别）──
   /^IMG_?\d{3,}\b/i,                                      // IMG_0610 1293×1056 127 KB（开头即文件名）
   /^(?=[0-9a-f]*[a-f])[0-9a-f]{16,}\b/,                   // 77d5d7ae… 哈希文件名开头（hex 串内必含 a-f 字母，见上）
   /^[A-Za-z0-9_.\- ]{1,64}\.(jpe?g|png|gif|webp|avif)\b/i,  // image.png 类文件名直出（含带空格名）
+  // ── 11-14 实证补齐（当日 unverified 池 2 条漏网新形态）──
+  /^Screenshot_\d{8,}/i,                                  // 安卓时间戳截图名直出（Screenshot_20261113-010506_Gemini~1）
+  /^[A-Za-z0-9_]{6,} \d{3,5}[×xX]\d{3,5} \d+(\.\d+)? (KB|MB)\b/i,
+                                                          // 社媒媒体 ID + 宽高 + 大小（HW9GgJ_WcAA9m3I 2048×1162 171 KB
+                                                          // ——Twitter/X 原图标注，ID 含大写字母，哈希模式管不到）
+  /^如图所示[，,]?[\s\S]*(?:Screenshot_\d{8,}|\.(?:jpe?g|png|gif|webp|avif)\b|\d{3,5}[×xX]\d{3,5}\s+\d+(?:\.\d+)?\s*(?:KB|MB)\b)/i,
+                                                          // 「如图所示」口语开头 + 附件标注证据（截图名/扩展名/宽高+大小）
+                                                          // ——无证据的真实声明（如图所示，推理吞吐提升 30%）不误杀
 ]
 
 /** 垃圾声明判定：过短（<8 字符，不可证伪）或命中任一垃圾模式。
@@ -3613,9 +3648,14 @@ if (report && Array.isArray(report.sections)) {
 // 百分比/小数）回查整期 confirmed 金标（claim+quote+sourceUrl），未命中 → summary
 // 替换为对应 claim 原文（不编造、不丢弃）。旗标 synth_body_hallucination:N。
 let synthBodyHallucinated = 0
+let titleClaimMismatched = 0
 if (report) {
-	const _audit = auditReportBodies(report, confirmed)
+	// 11-14 P2：auditReportBodies 扩展——未核查项 title 与 claim 实体原子零交集 → 弃 title 用 claim 前缀
+	// （当日实证 4/4 错位：title 概括了背景事件，正文渲染的却是 claim 原文，自相矛盾）
+	const _audit = auditReportBodies(report, confirmed, unverified)
 	synthBodyHallucinated = _audit.replaced
+	titleClaimMismatched = _audit.titleFixed || 0
+	if (_audit.titleFixed) log('TITLE-CLAIM-FIX 未核查项 title 与 claim 零实体交集 ' + _audit.titleFixed + ' 条 → 弃 title 用 claim 原文' + (_audit.samples.length ? '：' + _audit.samples.filter(s => s.startsWith('TITLE')).join('；') : ''))
 	if (_audit.atoms > 0) log('SYNTH-BODY-AUDIT 幻觉原子 ' + _audit.atoms + ' 个 / 替换 ' + _audit.replaced + ' 条 summary' + (_audit.samples.length ? '：' + _audit.samples.join('；') : ''))
 }
 
@@ -3655,6 +3695,8 @@ if (externalStats.unavailable > 0) degradedFlags.push('external_check_unavailabl
 // 9/19 烟测实证：report 幻觉引用被确定性过滤的计数必须可见。
 if (reportSourceHallucinated > 0) degradedFlags.push('report_source_hallucination:' + reportSourceHallucinated)
 if (synthBodyHallucinated > 0) degradedFlags.push('synth_body_hallucination:' + synthBodyHallucinated)
+// 11-14 P2：未核查项 title-claim 零实体交集被弃用的计数（title_claim_mismatch:N）
+if (titleClaimMismatched > 0) degradedFlags.push('title_claim_mismatch:' + titleClaimMismatched)
 // 9/13 跨天账本：无账本 → 跨天去重本轮关闭，如实上报（fail-open 不阻断成稿）。
 if (!REPORTED_LEDGER) degradedFlags.push('ledger_unavailable')
 // 9/01 方案 D：合成入口与总墙钟脱钩后，reportErr 只剩「代理真失败」一条路径
@@ -3688,7 +3730,7 @@ const md = report
         // 11-10 AIHOT 借鉴（tier/热度/回执/幻觉审计可见性）：
         t1_sources: confirmedOut.filter(c => c.tier === 'T1').length, t2_sources: confirmedOut.filter(c => c.tier === 'T2').length,
         roundup_clusters: roundupClusters, top_heat: clusterHeatRows.length ? clusterHeatRows[0].heat : 0,
-        fetch_receipts_reused: receiptsReused, synth_body_hallucination: synthBodyHallucinated },
+        fetch_receipts_reused: receiptsReused, synth_body_hallucination: synthBodyHallucinated, title_claim_mismatch: titleClaimMismatched },
       generated_by: generatedBy,
     } })
   : renderDegradedMarkdown({ date: DATE, window: WINDOW_LABEL, confirmed: confirmedOut, refuted: refutedOut, coverage, windowMisses, degraded: degradedFlags, noNewsCompanies: noDynamicCompanies, reportError: reportErr, generated_by: generatedBy })

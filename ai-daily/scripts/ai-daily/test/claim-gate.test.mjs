@@ -87,6 +87,16 @@ test('isJunkClaim：11-14 复审收紧——纯数字/大写 hex 开头的真声
   assert.equal(isJunkClaim({ claim: 'deadbeefdeadbeefdeadbeefdeadbeef 1320×1735 179 KB' }), true, '小写 hex 哈希文件名仍拦')
 })
 
+test('isJunkClaim：11-14 实证——Screenshot_ 时间戳原图名 / 如图所示 变体（当日 unverified 池漏网新形态）', () => {
+  // 逐字取自 2026-11-14 verified-claims.json unverified 数组（2 条漏网）
+  assert.equal(isJunkClaim({ claim: 'HW9GgJ_WcAA9m3I 2048×1162 171 KB Screenshot_2026-11-13-09-32-13-66_0b2fce7a16bf2' }), true, '哈希 ID + 宽高 + Screenshot 时间戳组合（哈希前缀已拦，双保险）')
+  assert.equal(isJunkClaim({ claim: '如图所示，Gemini Pro Pixel账号 Screenshot_20261113-010506_Gemini~1 1440×3021 271 KB' }), true, '「如图所示」口语变体开头（今日新金标）')
+  assert.equal(isJunkClaim({ claim: 'Screenshot_20261113-010506_Gemini~1 1440×3021 271 KB' }), true, 'Screenshot_ 时间戳原图名直出（去掉前缀后裸形态）')
+  // 反例：Screenshot_ 仅出现在句中、或「如图所示」后接真实说明 → 不误杀
+  assert.equal(isJunkClaim({ claim: '该团队开源了 Screenshot_20261113 中展示的 UI 自动化框架' }), false, '文件名在句中不拦')
+  assert.equal(isJunkClaim({ claim: '如图所示，推理吞吐提升 30%' }), false, '如图所示 + 真实声明不拦')
+})
+
 test('needsVerification：无实质内容不烧核查票（三分支与边界）', () => {
   assert.equal(needsVerification({ claim: '纯中文碎片句子测试' }), false, '9 CJK 无数字无拉丁 → 不核')
   assert.equal(needsVerification({ claim: '纯中文碎片句子测试十条' }), true, '10 CJK 成句 → 核')

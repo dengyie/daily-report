@@ -1308,9 +1308,14 @@ if (report && Array.isArray(report.sections)) {
 // 百分比/小数）回查整期 confirmed 金标（claim+quote+sourceUrl），未命中 → summary
 // 替换为对应 claim 原文（不编造、不丢弃）。旗标 synth_body_hallucination:N。
 let synthBodyHallucinated = 0
+let titleClaimMismatched = 0
 if (report) {
-	const _audit = auditReportBodies(report, confirmed)
+	// 11-14 P2：auditReportBodies 扩展——未核查项 title 与 claim 实体原子零交集 → 弃 title 用 claim 前缀
+	// （当日实证 4/4 错位：title 概括了背景事件，正文渲染的却是 claim 原文，自相矛盾）
+	const _audit = auditReportBodies(report, confirmed, unverified)
 	synthBodyHallucinated = _audit.replaced
+	titleClaimMismatched = _audit.titleFixed || 0
+	if (_audit.titleFixed) log('TITLE-CLAIM-FIX 未核查项 title 与 claim 零实体交集 ' + _audit.titleFixed + ' 条 → 弃 title 用 claim 原文' + (_audit.samples.length ? '：' + _audit.samples.filter(s => s.startsWith('TITLE')).join('；') : ''))
 	if (_audit.atoms > 0) log('SYNTH-BODY-AUDIT 幻觉原子 ' + _audit.atoms + ' 个 / 替换 ' + _audit.replaced + ' 条 summary' + (_audit.samples.length ? '：' + _audit.samples.join('；') : ''))
 }
 
@@ -1350,6 +1355,8 @@ if (externalStats.unavailable > 0) degradedFlags.push('external_check_unavailabl
 // 9/19 烟测实证：report 幻觉引用被确定性过滤的计数必须可见。
 if (reportSourceHallucinated > 0) degradedFlags.push('report_source_hallucination:' + reportSourceHallucinated)
 if (synthBodyHallucinated > 0) degradedFlags.push('synth_body_hallucination:' + synthBodyHallucinated)
+// 11-14 P2：未核查项 title-claim 零实体交集被弃用的计数（title_claim_mismatch:N）
+if (titleClaimMismatched > 0) degradedFlags.push('title_claim_mismatch:' + titleClaimMismatched)
 // 9/13 跨天账本：无账本 → 跨天去重本轮关闭，如实上报（fail-open 不阻断成稿）。
 if (!REPORTED_LEDGER) degradedFlags.push('ledger_unavailable')
 // 9/01 方案 D：合成入口与总墙钟脱钩后，reportErr 只剩「代理真失败」一条路径
@@ -1383,7 +1390,7 @@ const md = report
         // 11-10 AIHOT 借鉴（tier/热度/回执/幻觉审计可见性）：
         t1_sources: confirmedOut.filter(c => c.tier === 'T1').length, t2_sources: confirmedOut.filter(c => c.tier === 'T2').length,
         roundup_clusters: roundupClusters, top_heat: clusterHeatRows.length ? clusterHeatRows[0].heat : 0,
-        fetch_receipts_reused: receiptsReused, synth_body_hallucination: synthBodyHallucinated },
+        fetch_receipts_reused: receiptsReused, synth_body_hallucination: synthBodyHallucinated, title_claim_mismatch: titleClaimMismatched },
       generated_by: generatedBy,
     } })
   : renderDegradedMarkdown({ date: DATE, window: WINDOW_LABEL, confirmed: confirmedOut, refuted: refutedOut, coverage, windowMisses, degraded: degradedFlags, noNewsCompanies: noDynamicCompanies, reportError: reportErr, generated_by: generatedBy })

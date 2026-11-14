@@ -285,3 +285,52 @@ test('CLI --ledger 隔离：finalize 落盘成功路径的回执跟 override 同
   assert.equal(receiptsPath, path.join('/tmp/fake', 'fetch-receipts.json'))
   assert.notEqual(receiptsPath, path.join(os.homedir(), '.ai-daily', 'fetch-receipts.json'), '不得指向生产回执路径')
 })
+
+// ─── 11-14 P2：未核查项 title-claim 一致性门（当日 4/4 错位实证）───
+// 实证：report 代理为 unverified claim 自拟 title 时概括了背景事件而非 claim 本身
+// （title 说 Orchestrator 配额、正文渲染 Hydrogen 定价原文）——title 是编的、claim 是
+// 账本原文，无一致性约束。确定性防线：title 实体原子与 claim 原子零交集 → 弃 title。
+
+test('auditReportBodies title 门：未核查项 title 与 claim 零实体交集 → 弃 title 用 claim 原文（11-14 实证回放）', () => {
+  const confirmed = []
+  const unverified = [
+    { claim: 'Gemini 4 Hydrogen 在整个 100 万 token 上下文窗口内实行统一价格：输入 1.50 美元/百万 token，输出 7.50 美元/百万 token。', sourceUrl: 'https://blog.google/x' },
+    { claim: 'inclusionAI 发布 Duo v1 全双工世界模型，可实时持续感知视听输入并同时回应用户', sourceUrl: 'https://huggingface.co/y' },
+  ]
+  const mkItem = (title, summary, sources) => ({ title, summary, sources, confidence: 'low', status: '未核查' })
+  const report = { sections: [{ board: 'labs', title: '实验室', items: [
+    // 11-14 真实错位形态：title 讲 Orchestrator 配额，claim 是 Hydrogen 定价
+    mkItem('据称 Antigravity Orchestrator 少耗 24% 配额', unverified[0].claim, ['https://blog.google/x']),
+    mkItem('称 Duo v1 用双 rollout 蒸馏缓解分布偏移', unverified[1].claim, ['https://huggingface.co/y']),
+  ] }] }
+  const r = auditReportBodies(report, confirmed, unverified)
+  assert.equal(r.titleFixed, 2, '两条错位 title 全被弃用: ' + JSON.stringify(r))
+  assert.ok(report.sections[0].items[0].title.includes('Hydrogen') || report.sections[0].items[0].title.includes('统一价格'), 'title 修复为 claim 前缀: ' + report.sections[0].items[0].title)
+  assert.ok(report.sections[0].items[1].title.includes('Duo') || report.sections[0].items[1].title.includes('全双工'), 'title 修复为 claim 前缀: ' + report.sections[0].items[1].title)
+})
+
+test('auditReportBodies title 门：title 与 claim 共享实体 → 不动；已核查项不校验（不扩口径）', () => {
+  const confirmed = mkConfirmed()
+  const unverified = [
+    { claim: '据称 DuoEcho 团队裁撤了整个 multimodal 团队约 70 人', sourceUrl: 'https://example.com/z' },
+  ]
+  const report = { sections: [{ board: 'labs', title: '实验室', items: [
+    // 未核查 + title 与 claim 共享实体（DuoEcho/multimodal/70）→ 不动
+    { title: '传 DuoEcho 裁撤 multimodal 团队 70 人', summary: unverified[0].claim, sources: ['https://example.com/z'], status: '未核查' },
+    // 已核查项即使 title 与 claim 零交集也不校验（vote 支撑，不扩口径）
+    { title: '开源推理栈迈入基础设施时代', summary: 'VFlash 提速 25 倍。', sources: ['https://huggingface.co/papers/2611.08449'], status: '已核查 2-0' },
+  ] }] }
+  const r = auditReportBodies(report, confirmed, unverified)
+  assert.equal(r.titleFixed, 0, '零误杀')
+  assert.equal(report.sections[0].items[0].title, '传 DuoEcho 裁撤 multimodal 团队 70 人', '共享实体的 title 不动')
+  assert.equal(report.sections[0].items[1].title, '开源推理栈迈入基础设施时代', '已核查项不校验')
+})
+
+test('auditReportBodies title 门：无 claim 来源对应 → title 保留（不编造替换源）', () => {
+  const report = { sections: [{ board: 'labs', title: '实验室', items: [
+    { title: '凭空标题无来源', summary: '某声明 AcmeLabs 相关。', sources: [], status: '未核查' },
+  ] }] }
+  const r = auditReportBodies(report, [], [])
+  assert.equal(r.titleFixed, 0)
+  assert.equal(report.sections[0].items[0].title, '凭空标题无来源', '无替换源不动')
+})

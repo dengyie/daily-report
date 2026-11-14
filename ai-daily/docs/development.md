@@ -236,6 +236,11 @@ meta.json 另有 `ledger_recorded`（recorded/skipped/failed，finalize 回写�
 
 ## 13. 变更记录
 
+- **2026-11-14（同日 · 首战质检 → P2 title-claim 错位根修 + 新金标二连）**：11-14 08:40 run（deepseek-v4-flash，confirmed 6/refuted 1/unverified 10，全 T1 头条）质检实证两缺陷并当日根修：
+  - **[P2·render·未核查项 title-claim 系统性错位]** 待核实小节 4/4 条 item 的代理自拟 title 与正文渲染的 claim 原文**不是同一件事**（title 说「Orchestrator 少耗 24% 配额」、正文是 Hydrogen 定价原文）——根因链：`unverifiedList` 只喂 claim 原文，title 由 report 代理自拟，两者无一致性约束；且已核事实（Hydrogen 定价 2-0）在待核实节以「未核查」重复出现，自相矛盾。根修：`auditReportBodies` 扩展 title 门（零模型裁判，与原子门同哲学）——未核查项 title 的实体原子与对应 claim 原子**零交集 → 弃 title 用 claim 原文前缀**；已核查项不校验（vote 支撑，不扩口径）；金标为空时 title 门独立工作（原子门守卫下沉到循环内）。接线消费 `unverified` 池（第三参），`meta.stats.title_claim_mismatch` + degraded 旗标 `title_claim_mismatch:N` 双账目。
+  - **[gate·11-14 当日漏网二形态]** unverified 池 2 条新形态金标：① `HW9GgJ_WcAA9m3I 2048×1162 171 KB Screenshot_…`——Twitter/X 媒体 ID（**含大写字母**，16+ 位小写哈希模式管不到）+ 宽高 + 大小 → 新模式 `^[A-Za-z0-9_]{6,} \d{3,5}[×xX]\d{3,5} \d+(\.\d+)? (KB|MB)`；② `Screenshot_20261113-010506_Gemini~1` 安卓时间戳截图名 → 新模式 `^Screenshot_\d{8,}`；③ `如图所示，Gemini Pro Pixel账号 …` 口语开头——**收窄为「如图所示 + 附件证据」组合**（截图名/扩展名/宽高大小三选一在后文才拦），无证据真声明（如图所示，推理吞吐提升 30%）不误杀——首轮实现无条件拦截被反例测试当场抓住修正。
+  - 测试 **543 项 534 pass / 0 fail / 9 skip**（+4：11-14 金标回放 5 正例 2 反例、title 门三行为测试——错位弃用/共享实体不动/无来源保留）；产物 3825 行 `--sync-vault` 同步。**同日 11:xx 手动重跑验收**（用户授权；产物备份 `.bak-1114-preRerun`，账本指纹幂等已确认——recordLedger normURL|tokens 去重，重跑 confirmed 同事件 added=0）：观察点 title 门日志 `TITLE-CLAIM-FIX`、claim_gate.dropped 含 Screenshot_/媒体 ID 形态、账本 11-14 条目不翻倍。
+
 - **2026-11-14（同日 · 生产级 Code Review 清偿 4 项）**：对质量闸三修（上一条）执行严格生产 review，确认无 P0/P1/P2（引用透传/TDZ/包装器原子性/全消费点无旁路逐一核对通过），清偿 4 项 P3/Suggestion：
   - **[gate·_DIM 死代码删除]** 复审实锤 `_DIM && /^(IMG_?…|[0-9a-f]{16,})/` 组合行**不可达**——两个前缀条件均已在 JUNK_RES 前置模式内（且无 `$` 锚，尾部评论残片本就不影响判定），`_DIM` 常量随之无消费。删行删常量，docstring 同步改写（原「含宽高对」描述误导维护者）。
   - **[gate·哈希模式收紧]** `[0-9a-f]{16,}\b/i` 对纯数字开头真声明误杀（`777…` 32 位十进制、大数量级声明）且放行大写 hex 词。Discourse 原图名（MD5/SHA1）必含 a-f 字母 → 改 `(?=[0-9a-f]*[a-f])[0-9a-f]{16,}`（去 /i，hex 串内必含字母）；金标 `77d5…` 行为不变。反例锁 3 条（纯数字×2 / 大写 hex）+ 金标小写哈希仍拦。
