@@ -801,7 +801,10 @@ for (const batch of fetchBatches) {
         // fetch 代理自判 primary 看的是页面长相不是域名真伪，社区帖外链到转载/仿冒页同样能骗过
         // verify 的一手源宽松默认。真 T1（如 nvidianews）行为不变；非 T1 封顶 secondary 并计数。
         const _capped = capOutlinkQuality(bound)
-        if (_capped.capped) outlinkQualityCapped += _capped.capped
+        if (_capped.capped) {
+          outlinkQualityCapped += _capped.capped
+          log('OUTLINK-QUALITY-CAP ' + hostOf(bound.url) + ' 非 T1 域 primary → secondary（' + _capped.capped + ' 处，源+claim 混合口径）')
+        }
         return bound
       }).catch(e => {
         // 9/19 F10：吞错补 log——.then 映射段抛错与代理真实失败在账面上不可区分的问题。

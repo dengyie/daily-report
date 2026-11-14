@@ -566,7 +566,8 @@ const sourceTier = url => {
 // verify 的「一手源宽松默认」（prompts.mjs verifyPrompt isPrimary 分支）被假 primary 骗过。
 // 规则：outlink 来源升 primary 必须域名命中 TIER1_HOSTS（sourceTier==='T1'），否则封顶
 // secondary。HIGH_VALUE_OUTLINK_RE 白名单里的媒体域（techcrunch/reuters 等）本就该是
-// secondary，此闸不改变其正常语义；纯函数原地改写（与 claim-gate「引用透传」同哲学）。
+// secondary，此闸不改变其正常语义；就地逻辑改写，无外部副作用（与 claim-gate「引用透传」
+// 同哲学）。返回 capped 为降级处数——源+声明混合口径（meta 计数按此读，勿当纯源数）。
 const capOutlinkQuality = bound => {
   if (!bound || bound.found_via !== 'linuxdo-outlink' || bound.sourceQuality !== 'primary') return { bound, capped: 0 }
   let capped = 0
@@ -2314,27 +2315,28 @@ const { isJunkClaim, needsVerification, gateClaims } = (() => {
 // 11-13 实证补齐（Discourse 附件名前缀 image 常被省略，直接是文件名开头）：
 //   'IMG_0610 1293×1056 127 KB' / '77d5…f6a4 1320×1735 179 KB'——既有 ① 假设 'image ' 前缀
 //   必在，论坛 mint 路的附件标注没这个前缀 → 漏网进 unverified 池污染待核实小节。
-const _DIM = /\d{3,5}\s*[×xX]\s*\d{3,5}/                 // 1293×1056（纯宽高对，两侧各 ≥3 位）
+// 11-14 复审收紧：哈希名必含 a-f 字母（MD5/SHA1 全数字概率≈0），模式禁 /i 且要求
+//   至少一个字母——16+ 位纯数字开头（大数量级/精度位数）与大写 hex 词开头的真声明不误杀。
 const JUNK_RES = [
   /^image\s+\d+[×xX]\d+/i,                                 // 附件尺寸标注开头（image 580×286 7.97 KB）
   /^\d+(\.\d+)?\s*(KB|MB|GB)\b/i,                      // 纯大小串开头
   /(^|\s)image\s+\d+[×xX]\d+\s+\d+(\.\d+)?\s*(KB|MB)\b/i,  // 内嵌附件标注（"如图： image 487×438 13.4 KB …"）
   /^如图[：:，,]?\s*(image|$)/i,                        // 「如图」图片说明碎片——收窄到紧跟附件标注或到此为止，
                                                        // 防误杀「如图 3 所示，营收增长 30%」（设计 §5）
-  // ── 11-13：裸文件名开头的附件标注（无 'image ' 前缀形态）──
+  // ── 11-13：裸文件名开头的附件标注（无 'image ' 前缀形态），后跟评论残片不影响判定
+  //   （'IMG_4628 1290×621 108 KB 不会真的是…'——文件名开头即机械可识别）──
   /^IMG_?\d{3,}\b/i,                                      // IMG_0610 1293×1056 127 KB（开头即文件名）
-  /^[0-9a-f]{16,}\b/i,                                    // 77d5d7ae… 哈希文件名开头（Discourse 原图名）
+  /^(?=[0-9a-f]*[a-f])[0-9a-f]{16,}\b/,                   // 77d5d7ae… 哈希文件名开头（hex 串内必含 a-f 字母，见上）
   /^[A-Za-z0-9_.\- ]{1,64}\.(jpe?g|png|gif|webp|avif)\b/i,  // image.png 类文件名直出（含带空格名）
 ]
 
 /** 垃圾声明判定：过短（<8 字符，不可证伪）或命中任一垃圾模式。
- *  11-13 追加：附件文件名开头 + 含宽高对 → 一律垃圾，后跟评论碎片不影响判定
- *  （'IMG_4628 1290×621 108 KB 不会真的是…'——文件名开头即机械可识别，尾部文字是评论残片）。 */
+ *  11-13 追加：附件文件名开头（无 'image ' 前缀形态）即机械可识别，尾部文字是评论残片
+ *  不影响判定（'IMG_4628 1290×621 108 KB 不会真的是…'——见 JUNK_RES 11-13 段注释）。 */
 const isJunkClaim = c => {
   const t = (c && typeof c.claim === 'string') ? c.claim.trim() : ''
   if (t.length < 8) return true
   if (JUNK_RES.some(re => re.test(t))) return true
-  if (_DIM.test(t) && /^(IMG_?\d{3,}|[0-9a-f]{16,})\b/i.test(t)) return true
   // URL 转发残片：以链接开头、去掉链接后剩余文字 < 12 字符（如 "https://… The Times"）——
   // 可证伪声明需要文字陈述事实，链接后只剩几个词属转发残片（10-04 实证 #5）
   if (/^https?:\/\/\S+/.test(t) && t.replace(/^https?:\/\/\S+\s*/, '').length < 12) return true
@@ -3104,7 +3106,10 @@ for (const batch of fetchBatches) {
         // fetch 代理自判 primary 看的是页面长相不是域名真伪，社区帖外链到转载/仿冒页同样能骗过
         // verify 的一手源宽松默认。真 T1（如 nvidianews）行为不变；非 T1 封顶 secondary 并计数。
         const _capped = capOutlinkQuality(bound)
-        if (_capped.capped) outlinkQualityCapped += _capped.capped
+        if (_capped.capped) {
+          outlinkQualityCapped += _capped.capped
+          log('OUTLINK-QUALITY-CAP ' + hostOf(bound.url) + ' 非 T1 域 primary → secondary（' + _capped.capped + ' 处，源+claim 混合口径）')
+        }
         return bound
       }).catch(e => {
         // 9/19 F10：吞错补 log——.then 映射段抛错与代理真实失败在账面上不可区分的问题。

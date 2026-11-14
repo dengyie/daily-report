@@ -608,3 +608,14 @@ test('模板：claim-gate 接线顺序（10-04 声明质量门）——过滤先
   // claimCount+claimUrls 三处消费方与 allClaims 同一口径（否则同一报告页两个 claims 数对不上）
   assert.match(TPL, /for \(const s of sources\) s\.claims = s\.claims\.filter\(c => !_droppedSet\.has\(c\)\)/, '垃圾同步剥离出 sources[].claims（三处消费方口径一致）')
 })
+
+test('模板：capOutlinkQuality 接线锁（11-14 复审 P3——模板重构可静默摘闸）', () => {
+  // fetch .then 单点接线：bindExtractedClaims 之后、.catch 兜底之前——闸在 bound 返回上游，
+  // 封顶结果随对象引用流入 sources（若重构把调用挤掉，模块级行为测试仍绿，闸静默失效）
+  assert.match(TPL, /const _capped = capOutlinkQuality\(bound\)/, 'fetch .then 接线在场')
+  assert.ok(TPL.indexOf('bindExtractedClaims(ext, src)') < TPL.indexOf('capOutlinkQuality(bound)'), '闸在 bind 之后（消费 bound）')
+  assert.ok(TPL.indexOf('capOutlinkQuality(bound)') < TPL.indexOf('FETCH-ERR '), '闸在 .catch 兜底之前')
+  // 逐源日志行 + meta 计数双消费（11-14 复审 Suggestion）
+  assert.match(TPL, /OUTLINK-QUALITY-CAP /, '封顶逐源日志在场')
+  assert.match(TPL, /outlink_quality_capped: outlinkQualityCapped/, 'meta 计数消费在场')
+})

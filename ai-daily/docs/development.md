@@ -236,6 +236,13 @@ meta.json 另有 `ledger_recorded`（recorded/skipped/failed，finalize 回写�
 
 ## 13. 变更记录
 
+- **2026-11-14（同日 · 生产级 Code Review 清偿 4 项）**：对质量闸三修（上一条）执行严格生产 review，确认无 P0/P1/P2（引用透传/TDZ/包装器原子性/全消费点无旁路逐一核对通过），清偿 4 项 P3/Suggestion：
+  - **[gate·_DIM 死代码删除]** 复审实锤 `_DIM && /^(IMG_?…|[0-9a-f]{16,})/` 组合行**不可达**——两个前缀条件均已在 JUNK_RES 前置模式内（且无 `$` 锚，尾部评论残片本就不影响判定），`_DIM` 常量随之无消费。删行删常量，docstring 同步改写（原「含宽高对」描述误导维护者）。
+  - **[gate·哈希模式收紧]** `[0-9a-f]{16,}\b/i` 对纯数字开头真声明误杀（`777…` 32 位十进制、大数量级声明）且放行大写 hex 词。Discourse 原图名（MD5/SHA1）必含 a-f 字母 → 改 `(?=[0-9a-f]*[a-f])[0-9a-f]{16,}`（去 /i，hex 串内必含字母）；金标 `77d5…` 行为不变。反例锁 3 条（纯数字×2 / 大写 hex）+ 金标小写哈希仍拦。
+  - **[boards·capOutlinkQuality 注释口径]** 「纯函数原地改写」措辞矛盾修正（就地逻辑改写、无外部副作用）；capped 计数口径写明「源+claim 混合，勿当纯源数」。
+  - **[template·封顶逐源日志 + 接线 TPL 锁]** 封顶原只有 meta 计数、排障看不到哪个域名被降 → 补 `OUTLINK-QUALITY-CAP <host> 非 T1 域 primary → secondary（N 处…）` 逐源日志；workflow-integration 补接线锁（接线在场 / bind 之后 .catch 之前 / 日志行 / meta 消费 4 断言）——模块级行为测试对模板重构摘闸不设防，此锁补上。
+  - 全量 **539 项 530 pass / 0 fail / 9 有意 skip**；产物 3783 行 `--sync-vault` 已同步（`_DIM` 0 处实证剥离）。
+
 - **2026-11-14（11-13 黄仁勋 case 复盘 → 质量闸三修）**：深想「怎么保证日报质量」后把结论落成三件结构修复（11-13 的 8 条 unverified 全为 linux.do 社区噪声、6 条 confirmed 全 T1 的数据支撑）：
   - **[gate·附件名直出伪 claim]** 11-13 unverified 里 3 条 Discourse 图片文件名伪 claim（`IMG_0610 1293×1056 127 KB`、`77d5d7ae…f6a4 1320×1735 179 KB`、`IMG_4628 1290×621 108 KB 不会真的是…`）漏过 claim-gate——既有模式表假设 `image ` 前缀必在，论坛 mint 路附件名直出没有该前缀。`claim-gate.mjs` 补四类机械模式：IMG_ 序号开头 / ≥16 位十六进制哈希开头 / 图片扩展名直出（含带空格名）/ 附件名开头+宽高对（尾部评论残片不影响判定）。**11-13 真实数据回放：3 垃圾全拦、6 confirmed 零误杀**；反例锁死（`IMG 架构吞吐提升 25%`、`该分辨率 1293×1056 的截图…` 不误杀）。
   - **[boards·outlink 假 primary 域名封顶]** 黄仁勋链路复盘实证：linuxdo-outlink 的 sourceQuality 由 fetch 代理自判（只看页面长相，无域名真伪校验），本次真身 nvidianews 通过了每一道门——机制上社区帖外链到转载/自媒体/仿冒域同样能拿 primary、骗过 verifyPrompt 的一手源宽松默认（默认 refuted=false）。新增 `capOutlinkQuality`（boards.mjs 纯函数，与 sourceTier 同域）：`found_via==='linuxdo-outlink'` 且 primary 的来源/claim，域名必须命中 TIER1_HOSTS（host 后缀判定）否则封顶 secondary 并计数；template fetch 绑定点接线，`meta.outlink_quality_capped` 入账。真 T1 回放行为不变、仿冒域 `openai.com.evil.io` 不借 T1 通票（4 行为测试）。

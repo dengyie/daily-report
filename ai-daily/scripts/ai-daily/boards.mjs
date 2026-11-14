@@ -185,7 +185,8 @@ export const sourceTier = url => {
 // verify 的「一手源宽松默认」（prompts.mjs verifyPrompt isPrimary 分支）被假 primary 骗过。
 // 规则：outlink 来源升 primary 必须域名命中 TIER1_HOSTS（sourceTier==='T1'），否则封顶
 // secondary。HIGH_VALUE_OUTLINK_RE 白名单里的媒体域（techcrunch/reuters 等）本就该是
-// secondary，此闸不改变其正常语义；纯函数原地改写（与 claim-gate「引用透传」同哲学）。
+// secondary，此闸不改变其正常语义；就地逻辑改写，无外部副作用（与 claim-gate「引用透传」
+// 同哲学）。返回 capped 为降级处数——源+声明混合口径（meta 计数按此读，勿当纯源数）。
 export const capOutlinkQuality = bound => {
   if (!bound || bound.found_via !== 'linuxdo-outlink' || bound.sourceQuality !== 'primary') return { bound, capped: 0 }
   let capped = 0

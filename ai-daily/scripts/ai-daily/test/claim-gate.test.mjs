@@ -76,6 +76,17 @@ test('isJunkClaim：11-13 形态反例不误杀（真实声明锁死）', () => 
   for (const t of REAL) assert.equal(isJunkClaim({ claim: t }), false, JSON.stringify(t))
 })
 
+test('isJunkClaim：11-14 复审收紧——纯数字/大写 hex 开头的真声明不误杀', () => {
+  const REAL = [
+    '7777777777777777777777777777777 是一种新型密钥格式',               // 16+ 位纯数字开头（非 hex 文件名）
+    '1152921504606846976 种组合超过棋类博弈状态空间',                   // 大数量级声明
+    'DEADBEEFCAFEBABEDEADBEEFCAFEBABE 是该固件的魔数签名',              // 大写 hex 词开头（禁 /i 后不拦）
+  ]
+  for (const t of REAL) assert.equal(isJunkClaim({ claim: t }), false, JSON.stringify(t))
+  // 金标哈希文件名（含 a-f 字母）仍拦——收紧不破正面形态
+  assert.equal(isJunkClaim({ claim: 'deadbeefdeadbeefdeadbeefdeadbeef 1320×1735 179 KB' }), true, '小写 hex 哈希文件名仍拦')
+})
+
 test('needsVerification：无实质内容不烧核查票（三分支与边界）', () => {
   assert.equal(needsVerification({ claim: '纯中文碎片句子测试' }), false, '9 CJK 无数字无拉丁 → 不核')
   assert.equal(needsVerification({ claim: '纯中文碎片句子测试十条' }), true, '10 CJK 成句 → 核')
