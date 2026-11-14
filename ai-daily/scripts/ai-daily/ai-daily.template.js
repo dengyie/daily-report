@@ -883,9 +883,18 @@ phase('Verify')
 // 全 Verify 阶段共享一个阶梯 t0：6 票并发不得各自重新吃满 LADDER_BUDGET_MS（烟测 420s 已见后票把预算叠高）。
 const verifyLadderT0 = now()
 
+// 11-14 票向先验（黄仁勋案缓解）：每 claim 查一次账本（ledgerPriorFor，storyMatch 同事件判定），
+// 命中 → verifyPrompt 注入「已于 N 天前核查成稿」先验——同事件跨日换 URL 重投不再因次要源
+// 引语细节缺失翻面（11-13 实证：同一事件 T1 源 2-1 confirmed、T2 源 0-2 refuted 两轮打架）。
+// 无账本（首跑）/无命中 → ctx 无 ledgerPrior 字段，prompt 零变化（fail-open）。
+const _ctxWithPrior = c => {
+  const prior = ledgerPriorFor(c, REPORTED_LEDGER, DATE)
+  return prior ? { ...ctxP, ledgerPrior: prior } : ctxP
+}
+
 const _voteBatch = (c, n, startIdx, timeoutMs, ladderT0) => parallel(Array.from({ length: n }, (_, v) => () => {
   const label = 'v' + (startIdx + v) + ':' + (c.claim || '').slice(0, 30)
-  return safeAgentWithLadder(verifyPrompt(c, ctxP), { label, phase: 'Verify', schema: VERDICT_SCHEMA, effort: 'low', timeoutMs }, MODEL_LADDER, LADDER_BUDGET_MS, ladderT0 || verifyLadderT0).then(r => {
+  return safeAgentWithLadder(verifyPrompt(c, _ctxWithPrior(c)), { label, phase: 'Verify', schema: VERDICT_SCHEMA, effort: 'low', timeoutMs }, MODEL_LADDER, LADDER_BUDGET_MS, ladderT0 || verifyLadderT0).then(r => {
     BREAKER.record(!!r, label)
     return r
   })
@@ -978,16 +987,27 @@ const verifyRetry = { targets: 0, recovered: 0 }
 // ─── 9/19 F1 外部抽查票：forum/blog 存活 claim 的独立佐证 ───
 // 2+1 内部票禁外部搜索（省 token），只做文本自洽判断——「引语整齐但事件不实」的论坛转述/软文
 // 恰好能通关并以「已核查 N-N」肯定态进正文（9/17 实证：网信办条目唯一来源是论坛转帖）。
-// 对 forum/blog 来源的存活 claim 加 1 张允许 WebSearch 的佐证票（三态判定 externalCheckState，
+// 对存活 claim 加 1 张允许外部搜索的佐证票（三态判定 externalCheckState，
 // schemas.mjs——9/19 review P2-2：模型自报 toolsUnavailable 必须走 unavailable，不得落 corroborated）：
 //   否决 → 翻转为 refuted（回到 killed）；佐证 → externalCheck=corroborated；
 //   不可用（代理失败 / toolsUnavailable / 预算耗尽未轮到）→ externalCheck=unavailable
 //   （不翻转存活，但 Status 烘焙为「未核查」，不冒充已核查）。
-const externalStats = { targets: 0, corroborated: 0, refuted: 0, unavailable: 0 }
+// 11-14 根修两处：
+//   ① 目标口径扩展——forum/blog 之外，T2 二手源（official 除外的 medium/secondary/aggregator）
+//     的非常规声明（人事变动/并购/解散/关闭/诉讼，isExtraordinaryClaim 判定 claim-gate.mjs）
+//     也纳入抽查：这类「惊人事件」若只靠内部一致性票放行，正是软文最爱的形态（T2 占比 71% 环境
+//     下论坛源覆盖面太窄，11-14 实证 10/14 confirmed 全无外部防线）。
+//   ② unavailable 三分类记账（unavailableReason）——11-08~11-14 meta 连续 4 天
+//     external_check.unavailable=N 却无法归因（WebSearch 死通道 vs 预算耗尽 vs 票报错），
+//     根修后按原因细分：noSearchChannel（模型自报工具不可用）/ agentError（票 null/异常）/
+//     budget（预算耗尽未轮到），meta.external_check 逐项可观测。
+const externalStats = { targets: 0, corroborated: 0, refuted: 0, unavailable: 0, unavailableBy: { noSearchChannel: 0, agentError: 0, budget: 0 } }
 {
-  const extTargets = voted.filter(c => c && c.survives && !c.isMajorOut && (c.sourceQuality === 'forum' || c.sourceQuality === 'blog'))
+  const extTargets = voted.filter(c => c && c.survives && !c.isMajorOut && !c.externalCheck &&
+    (c.sourceQuality === 'forum' || c.sourceQuality === 'blog' ||
+      (isExtraordinaryClaim(c) && c.sourceQuality !== 'primary')))
   externalStats.targets = extTargets.length
-  if (extTargets.length) log('EXTERNAL-CHECK forum/blog 存活 claim 外部抽查 ' + extTargets.length + ' 条（独立佐证票 ×1，允许 WebSearch）')
+  if (extTargets.length) log('EXTERNAL-CHECK 存活 claim 外部抽查 ' + extTargets.length + ' 条（forum/blog 全量 + 二手源非常规声明；独立佐证票 ×1，主路 grok-search CLI）')
   for (const batch of chunkArr(extTargets, VERIFY_BATCH)) {
     // 9/19 review P3：批间预算闸（纯读不记账）——Verify 死线耗尽不再放行新外部票批，余票走下方兜底 unavailable。
     if (budgetGate.roomTo('Verify') === 0) { log('BUDGET-BREAK External-check 余批跳过（Verify 死线已耗尽，roomTo=0 纯读停止）'); break }
@@ -997,7 +1017,15 @@ const externalStats = { targets: 0, corroborated: 0, refuted: 0, unavailable: 0 
     res.forEach((r, i) => {
       const c = batch[i]
       const state = externalCheckState(r)
-      if (state === 'unavailable') { c.externalCheck = 'unavailable'; externalStats.unavailable++; return }
+      if (state === 'unavailable') {
+        c.externalCheck = 'unavailable'
+        // 11-14 三分类：票活着且自报 toolsUnavailable → 搜索通道问题；票为 null/坏形状 → 代理/模型故障。
+        const reason = (r && r.toolsUnavailable === true) ? 'noSearchChannel' : 'agentError'
+        c.unavailableReason = reason
+        externalStats.unavailable++
+        externalStats.unavailableBy[reason]++
+        return
+      }
       c.verdicts.push(r)
       if (state === 'refuted') {
         c.refutedCount = (c.refutedCount || 0) + 1
@@ -1013,8 +1041,9 @@ const externalStats = { targets: 0, corroborated: 0, refuted: 0, unavailable: 0 
   }
   // 9/19 review P3 兜底：预算耗尽/批间 break 未轮到的票一律 unavailable——绝不让 forum claim
   // 因「没轮到抽查」而以 undefined externalCheck 走进「已核查」烘焙分支。
+  // 11-14：兜底路径归因 budget（与票故障区分开，meta 可观测）。
   for (const c of extTargets) {
-    if (!c.externalCheck) { c.externalCheck = 'unavailable'; externalStats.unavailable++ }
+    if (!c.externalCheck) { c.externalCheck = 'unavailable'; c.unavailableReason = 'budget'; externalStats.unavailable++; externalStats.unavailableBy.budget++ }
   }
 }
 

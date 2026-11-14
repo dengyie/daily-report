@@ -511,8 +511,9 @@ test('模板：linuxdo 消费端窗口预过滤 + 质量排序（L1/L2）', () =
   assert.match(TPL, /date: p\.date \|\| '', board: 'linuxdo'/, '无日期帖不再伪造 date=DATE')
 })
 
-test('模板：外部抽查票接线（F1）——forum/blog 存活 claim ×1 独立佐证票', () => {
-  assert.match(TPL, /EXTERNAL-CHECK forum\/blog 存活 claim 外部抽查/, '抽查入口 log')
+test('模板：外部抽查票接线（F1）——forum/blog + 二手源非常规声明 ×1 独立佐证票', () => {
+  assert.match(TPL, /EXTERNAL-CHECK 存活 claim 外部抽查/, '抽查入口 log')
+  assert.match(TPL, /isExtraordinaryClaim\(c\) && c\.sourceQuality !== 'primary'/, '11-14 目标扩展：二手源非常规声明进抽查（T2 占比 71% 环境的实质防线）')
   assert.match(TPL, /externalVerifyPrompt\(c, ctxP\)/, '外部票 prompt 接线')
   assert.match(TPL, /c\.survives = false; c\.isRefuted = true; c\.externalCheck = 'refuted'/, '外部否决翻转 claim（回 killed）')
   assert.match(TPL, /external_check: externalStats/, 'meta 账目 external_check')
@@ -543,9 +544,12 @@ test('模板：外部票三态走 externalCheckState 纯函数（toolsUnavailabl
   assert.ok(!/if \(!r\) \{ c\.externalCheck = 'unavailable'/.test(TPL), '旧的「仅代理失败=unavailable」二分已移除（P2-2 根因）')
 })
 
-test('模板：外部票批间预算闸 + 未投票兜底 unavailable', () => {
+test('模板：外部票批间预算闸 + 未投票兜底 unavailable（三分类归因）', () => {
   assert.match(TPL, /BUDGET-BREAK External-check 余批跳过/, 'Verify 死线耗尽不再放行外部票批（roomTo 纯读）')
-  assert.match(TPL, /if \(!c\.externalCheck\) \{ c\.externalCheck = 'unavailable'/, '预算耗尽未轮到的票兜底 unavailable——绝不以 undefined 走进已核查烘焙')
+  assert.match(TPL, /if \(!c\.externalCheck\) \{ c\.externalCheck = 'unavailable'; c\.unavailableReason = 'budget'/, '预算耗尽未轮到的票兜底 unavailable——绝不以 undefined 走进已核查烘焙')
+  // 11-14 三分类记账：meta.external_check.unavailableBy { noSearchChannel / agentError / budget }
+  assert.match(TPL, /unavailableBy/, '三分类记账字段在场（4 天连失不可归因的根修配套）')
+  assert.match(TPL, /const reason = \(r && r\.toolsUnavailable === true\) \? 'noSearchChannel' : 'agentError'/, '票活→自报通道死 noSearchChannel；票 null/坏形状→agentError')
 })
 
 test('模板：dropped_detail 书账含 linuxdo-outlink 通道', () => {

@@ -1216,8 +1216,11 @@ const fetchPrompt = (src, ctx) => {
 }
 
 // externalVerifyPrompt（9/19 F1 新增）：forum/blog 来源的存活 claim 加 1 张独立佐证票。
-// 与内部票（verifyPrompt）的根本区别：**必须**用 WebSearch/WebFetch 找独立证据——内部票禁外部搜索、
-// 只做文本自洽判断，「引语整齐但不实」的转述/软文恰是它的盲区。票可用的四种结果编排层消费
+// 与内部票（verifyPrompt）的根本区别：**必须**找到外部独立证据——内部票禁外部搜索、
+// 只做文本自洽判断，「引语整齐但不实」的转述/软文恰是它的盲区。11-14 根修：gateway 三方模型
+// 的 WebSearch 是死通道（实测 server_tool_use.web_search_requests=0，两次调用一次空壳一次模型
+// 自述「无搜索工具」），主路改走宿主 grok-search CLI（--extra Tavily/Firecrawl/Exa 真实联网，
+// Grok 上游 503 也照常出卡）+ WebFetch；WebSearch 降级为可选辅路。票可用的四种结果编排层消费
 // （externalCheckState 三态判定，schemas.mjs）：
 //   refuted=true → claim 翻转为已否决；refuted=false + toolsUnavailable 未置 → externalCheck=corroborated；
 //   工具不可用 → refuted=false 且 **toolsUnavailable=true**（schema 字段，非 evidence 文本约定——
@@ -1225,22 +1228,35 @@ const fetchPrompt = (src, ctx) => {
 //   编排层把该 claim 的 status 烘焙为「未核查」（不冒充已核查）。
 const externalVerifyPrompt = (c, ctx) =>
   '## 独立佐证票（external checker）\n\n' +
-  '下列声明已通过 2+1 张内部一致性票（引语/日期/语气自洽），但内部票**禁止外部搜索**，无法发现「引语整齐但事件不实」的转述/软文。你的任务相反：**必须用外部搜索找独立证据**。\n\n' +
+  '下列声明已通过 2+1 张内部一致性票（引语/日期/语气自洽），但内部票**禁止外部搜索**，无法发现「引语整齐但事件不实」的转述/软文。你的任务相反：**必须找到外部独立证据**。\n\n' +
   '窗口：' + ctx.WINDOW_LABEL + '。\n\n## 声明\n' + '"' + c.claim + '"\n\n来源：' + c.sourceUrl + ' (' + c.sourceQuality + ')，页面日期：' + (c.publishDate || '未知') + '\n引语："' + c.quote + '"\n\n## 执行\n' +
-  '1. WebSearch 搜索声明中的实体+事件关键词（可加「' + (ctx.WTO || ctx.DATE) + '」限定时效）；最多 2 次搜索 + 1 次 WebFetch（打开最相关的搜索结果页确认）。\n' +
-  '2. 判定：找到**至少一个独立来源**（非本来源、非转贴/镜像本来源的聚合页）支撑声明的核心事实 → refuted=false；搜索后无任何独立来源支撑、或找到相反证据、或该「事件」只在论坛/自媒体流转而无任何权威侧消息 → refuted=true。\n' +
-  '3. 搜索工具不可用/全部失败 → 返回 **refuted=false 且 toolsUnavailable=true**，evidence 写明失败原因（编排层会将该 claim 以未核查口径呈现，不会冒充已核查）。\n\n' +
+  // 11-14 根修：gateway 三方模型的 WebSearch 实为死通道（server_tool_use=0、返回空壳/自述无工具），
+  // 改走宿主 grok-search CLI（Tavily/Firecrawl/Exa 真实联网，即使 Grok 上游 503 也降级出卡）+
+  // WebFetch 打开独立来源确认。WebSearch 降级为可选尝试（部分 Anthropic 渠道仍可用）。
+  '1.【主路·必做】宿主搜索（真实联网，含 Tavily/Firecrawl/Exa 多通道）：cd ' + ctx.GROK_DIR + " && ./scripts/search.js --days 7 --extra 4 --source-chars 300 --max-chars 3000 '<声明中的实体+事件关键词，如：Thinking Machines Inkling 2 Small 594B 发布>'\n" +
+  '   只看返回的 sources.items URL 卡片（provider/url/title/published_date/snippet）判断独立佐证；不看 answer.text（降级时 answer 只是原始摘录）。\n' +
+  '2.【辅路·可选】如主路无果，最多 1 次 WebSearch + 1 次 WebFetch（打开最相关的结果页确认）。WebSearch 返回空结果或提示无工具 → 立即放弃辅路，勿反复尝试。\n' +
+  '3. 判定：找到**至少一个独立来源**（域名非本来源、非转贴/镜像本来源的聚合页）支撑声明的核心事实 → refuted=false；搜索后无任何独立来源支撑、或找到相反证据、或该「事件」只在论坛/自媒体流转而无任何权威侧消息 → refuted=true。\n' +
+  '4. 主路命令执行失败（CLI 报错/无 sources）且辅路也无果 → 返回 **refuted=false 且 toolsUnavailable=true**，evidence 写明失败原因（编排层会将该 claim 以未核查口径呈现，不会冒充已核查）。\n\n' +
   '纪律：禁止截图/图片输入。Structured output only. Evidence 简短具体（≤80 字，注明佐证/否证来源域名）。'
 
 // verifyPrompt 需要 VOTES_PER_CLAIM/REFUTATIONS_REQUIRED，经 ctx 传入。
+// 11-14 票向先验（黄仁勋案缓解）：ctx.ledgerPrior 为账本命中条目（ledgerPriorFor，template 层
+// 按天缓存）时注入「本事件已于 N 天前核查并成稿」——同一事件跨日换 URL 重投，内部票不再因
+// 次要来源引语细节缺失翻面。null → 不注入（首日报道保持默认怀疑态度）。
 const verifyPrompt = (c, ctx) => {
   const isPrimary = c && c.sourceQuality === 'primary'
   const defaultLine = isPrimary
     ? '默认 refuted=false：一手源正文已抓、引语覆盖声明核心数字/专名即存活。仅当声明断言明显超出引语（引语只谈 X 却断言 Y）、日期明确超窗、或明显营销/标题党时才 refuted=true。'
     : '默认 refuted=true，除非证据充分支撑。'
+  const prior = ctx && ctx.ledgerPrior
+  const priorLine = prior && prior.day
+    ? '\n0. **跨日先验**：本事件已于 ' + prior.day + ' 核查通过并成稿（账本命中）。换源重投不改变事件本身的核查结论——除非本声明包含**新增的、与已报道版本矛盾**的断言，勿仅因本来源引语/日期细节不及前源而翻面。\n'
+    : ''
   return '## 对抗性核查票 ' + '(voter)\n\n' +
   '请对下列声明持怀疑态度，尝试证伪。≥' + ctx.REFUTATIONS_REQUIRED + '/' + ctx.VOTES_PER_CLAIM + ' 票证伪即否决。\n\n' +
   '窗口：' + ctx.WINDOW_LABEL + '。\n\n## 声明\n' + '"' + c.claim + '"\n\n来源：' + c.sourceUrl + ' (' + c.sourceQuality + ')，页面日期：' + (c.publishDate || '未知') + '，条目标注日期：' + (c.date || '未知') + '\n引语："' + c.quote + '"\n\n## 清单\n' +
+  priorLine +
   '1. 引语是**逐字抄录的完整支撑句**（契约要求覆盖声明全部细节——日期/数字/机构/对比）。声明中的细节凡能在引语中逐字溯源即视为被支撑；仅当声明断言明显超出引语范围（引语只谈 X 却断言 Y）才算过度引申。引语不是全文≠证据不足，勿因引语未铺陈全背景而否决。\n2. 时效：**窗口为 [' + (ctx.WFROM || ctx.DATE) + ', ' + (ctx.WTO || ctx.DATE) + ']**。事件/发布日期明显在窗口外（数天前/数周前/上月）→ refuted=true；页面日期在窗口内但内容陈述的是旧事件，按**事件实际发生日**判定，日期明确超窗仍 → refuted=true；无法判定日期则不因时效否决。\n3. 来源质量与声明强度是否匹配？（惊人声明需一手源）\n4. 是否营销话术/吹嘘/标题党/论坛猜测？（→ refuted=true）\n\n5. **禁止使用 WebSearch/WebFetch 等外部搜索工具**——本核查只依据上面给出的引语/来源/日期/声明做内部一致性判断，外部搜索会烧掉大量 token。\n\n' + defaultLine + '\n\nStructured output only. Evidence 简短具体（≤80 字）。'
 }
 
@@ -2044,7 +2060,7 @@ const isRoundupCluster = cluster => {
 return { clusterTokenize, clusterClaims, detectNumericConflict, mergeCluster, computeClusterHeat, ROUNDUP_RE, isRoundupCluster }
 })()
 	// ─── inline: ledger（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
-const { LEDGER_OVERLAP_MIN, LEDGER_SHARE_MIN, LEDGER_LOOKBACK_DAYS, LEDGER_KEEP_DAYS, LEDGER_MAX_TOKENS, parseReportedLedger, fingerprintTokens, makeLedgerEntry, storyMatch, filterReportedTargets, splitSeeds, pruneLedger, buildYesterdayTopics, parseFetchReceipts, receiptFilter } = (() => {
+const { LEDGER_OVERLAP_MIN, LEDGER_SHARE_MIN, LEDGER_LOOKBACK_DAYS, LEDGER_KEEP_DAYS, LEDGER_MAX_TOKENS, parseReportedLedger, fingerprintTokens, makeLedgerEntry, storyMatch, filterReportedTargets, splitSeeds, ledgerPriorFor, pruneLedger, buildYesterdayTopics, parseFetchReceipts, receiptFilter } = (() => {
 // ai-daily 跨天已报道账本（9/13 重构新增）——治理「同一事件连续多天整条重复成稿」的 P0 缺口。
 // 旧架构跨 run 零状态：3 天窗口重叠让昨日头条今日仍窗内、KNOWN_MAJOR_OUT 种子 21 天逐日重注入，
 // 实证 V4-Flash-Vision-Exp 连续 3 天、水彩 RL/孙鹏加盟等连续 2 天整条重复（同 URL）。
@@ -2201,6 +2217,19 @@ const splitSeeds = (seeds, ledger) => {
   return { fresh, reported }
 }
 
+// 票向先验查找（11-14，黄仁勋案缓解）：claim 命中账本近期已报道事件 → 返回该账本条目（fail-open）。
+// 消费方 verifyPrompt 把它烘成「本事件已于 N 天前核查并成稿」的先验——同一事件跨日换 URL 重投时，
+// 内部票不再因引语/日期细节缺失翻面（11-13 实证：T1 源 2-1 confirmed，T2 源 0-2 refuted，
+// 同一事件两轮投票互相打架）。返回 null = 无先验（首日报道，票按默认怀疑态度）。
+const ledgerPriorFor = (claim, ledger, today, lookbackDays = LEDGER_LOOKBACK_DAYS) => {
+  if (!claim) return null
+  const entries = Array.isArray(ledger) ? ledger : []
+  const recent = entries.filter(e => _withinLookback(e && e.day, today, lookback))
+  if (!recent.length) return null
+  const like = { url: claim.sourceUrl || claim.url || '', tokens: fingerprintTokens([claim.claim, claim.quote].filter(Boolean).join(' ')) }
+  return recent.find(e => storyMatch(like, e)) || null
+}
+
 // prune：只保留近 keepDays 天条目；day 不可解析的条目剔除（账本卫生）。today 缺失 → 原样返回。
 const pruneLedger = (entries, today, keepDays) => {
   if (!Array.isArray(entries)) return []
@@ -2321,10 +2350,10 @@ const receiptFilter = (targets, receipts, today) => {
   }
   return { keep, reused }
 }
-return { LEDGER_OVERLAP_MIN, LEDGER_SHARE_MIN, LEDGER_LOOKBACK_DAYS, LEDGER_KEEP_DAYS, LEDGER_MAX_TOKENS, parseReportedLedger, fingerprintTokens, makeLedgerEntry, storyMatch, filterReportedTargets, splitSeeds, pruneLedger, buildYesterdayTopics, parseFetchReceipts, receiptFilter }
+return { LEDGER_OVERLAP_MIN, LEDGER_SHARE_MIN, LEDGER_LOOKBACK_DAYS, LEDGER_KEEP_DAYS, LEDGER_MAX_TOKENS, parseReportedLedger, fingerprintTokens, makeLedgerEntry, storyMatch, filterReportedTargets, splitSeeds, ledgerPriorFor, pruneLedger, buildYesterdayTopics, parseFetchReceipts, receiptFilter }
 })()
 	// ─── inline: claim-gate（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
-const { isJunkClaim, needsVerification, gateClaims } = (() => {
+const { isJunkClaim, needsVerification, isExtraordinaryClaim, gateClaims } = (() => {
 // claim-gate — 声明质量门（纯函数，realm 安全：无 process/fs/Date.now/fetch/WebSocket）。
 //
 // 10-04 日报质量审计实证（docs/2026-10-04-claim-quality-gate-design.md §1）：论坛附件标注被
@@ -2385,6 +2414,15 @@ const needsVerification = c => {
   return /\d/.test(t) || /[A-Za-z]{2,}/.test(t) || (t.match(/[\u4e00-\u9fff]/g) || []).length >= 10
 }
 
+/** 非常规声明判定（11-14 external_check 目标扩展）：断言组织级事件突变——人事变动/并购/解散/
+ *  关闭/诉讼/停服。这类「惊人事件」在二手源（非 primary）流转时是软文最爱的形态，仅靠内部
+ *  一致性票（文本自洽）无法识破——需外部独立佐证票加防。机械可识别（动词+实体结构），宁滥勿漏：
+ *  命中即进 ext 抽查候选，佐证票成本有界（每条 1 张 low-effort 票）。 */
+const isExtraordinaryClaim = c => {
+  const t = (c && typeof c.claim === 'string') ? c.claim : ''
+  return /(?:人事|离职|跳槽|解雇|辞职|接任|卸任|罢免|复职)|(?:(?:收购|并购|合并|重组|出售|剥离)|(?:解散|倒闭|破产|关停|关闭|停运|下线|停止)|(?:起诉|诉讼|反垄断|罚款|调查))/.test(t)
+}
+
 /** 批量分账：clean/dropped 两桶，对象引用原样透传（不改写不复制）。 */
 const gateClaims = claims => {
   const clean = []
@@ -2392,7 +2430,7 @@ const gateClaims = claims => {
   for (const c of claims || []) (isJunkClaim(c) ? dropped : clean).push(c)
   return { clean, dropped }
 }
-return { isJunkClaim, needsVerification, gateClaims }
+return { isJunkClaim, needsVerification, isExtraordinaryClaim, gateClaims }
 })()
 	// ─── inline: linuxdo（11-11 P9：IIFE 块级作用域，私有标识符模块内封闭，导出面解构到顶层）───
 const { extractTopicsFromJson, HIGH_VALUE_OUTLINK_RE, extractPostTextFromJson, extractHighValueOutlink, mintLinuxdoSource } = (() => {
@@ -3223,9 +3261,18 @@ phase('Verify')
 // 全 Verify 阶段共享一个阶梯 t0：6 票并发不得各自重新吃满 LADDER_BUDGET_MS（烟测 420s 已见后票把预算叠高）。
 const verifyLadderT0 = now()
 
+// 11-14 票向先验（黄仁勋案缓解）：每 claim 查一次账本（ledgerPriorFor，storyMatch 同事件判定），
+// 命中 → verifyPrompt 注入「已于 N 天前核查成稿」先验——同事件跨日换 URL 重投不再因次要源
+// 引语细节缺失翻面（11-13 实证：同一事件 T1 源 2-1 confirmed、T2 源 0-2 refuted 两轮打架）。
+// 无账本（首跑）/无命中 → ctx 无 ledgerPrior 字段，prompt 零变化（fail-open）。
+const _ctxWithPrior = c => {
+  const prior = ledgerPriorFor(c, REPORTED_LEDGER, DATE)
+  return prior ? { ...ctxP, ledgerPrior: prior } : ctxP
+}
+
 const _voteBatch = (c, n, startIdx, timeoutMs, ladderT0) => parallel(Array.from({ length: n }, (_, v) => () => {
   const label = 'v' + (startIdx + v) + ':' + (c.claim || '').slice(0, 30)
-  return safeAgentWithLadder(verifyPrompt(c, ctxP), { label, phase: 'Verify', schema: VERDICT_SCHEMA, effort: 'low', timeoutMs }, MODEL_LADDER, LADDER_BUDGET_MS, ladderT0 || verifyLadderT0).then(r => {
+  return safeAgentWithLadder(verifyPrompt(c, _ctxWithPrior(c)), { label, phase: 'Verify', schema: VERDICT_SCHEMA, effort: 'low', timeoutMs }, MODEL_LADDER, LADDER_BUDGET_MS, ladderT0 || verifyLadderT0).then(r => {
     BREAKER.record(!!r, label)
     return r
   })
@@ -3318,16 +3365,27 @@ const verifyRetry = { targets: 0, recovered: 0 }
 // ─── 9/19 F1 外部抽查票：forum/blog 存活 claim 的独立佐证 ───
 // 2+1 内部票禁外部搜索（省 token），只做文本自洽判断——「引语整齐但事件不实」的论坛转述/软文
 // 恰好能通关并以「已核查 N-N」肯定态进正文（9/17 实证：网信办条目唯一来源是论坛转帖）。
-// 对 forum/blog 来源的存活 claim 加 1 张允许 WebSearch 的佐证票（三态判定 externalCheckState，
+// 对存活 claim 加 1 张允许外部搜索的佐证票（三态判定 externalCheckState，
 // schemas.mjs——9/19 review P2-2：模型自报 toolsUnavailable 必须走 unavailable，不得落 corroborated）：
 //   否决 → 翻转为 refuted（回到 killed）；佐证 → externalCheck=corroborated；
 //   不可用（代理失败 / toolsUnavailable / 预算耗尽未轮到）→ externalCheck=unavailable
 //   （不翻转存活，但 Status 烘焙为「未核查」，不冒充已核查）。
-const externalStats = { targets: 0, corroborated: 0, refuted: 0, unavailable: 0 }
+// 11-14 根修两处：
+//   ① 目标口径扩展——forum/blog 之外，T2 二手源（official 除外的 medium/secondary/aggregator）
+//     的非常规声明（人事变动/并购/解散/关闭/诉讼，isExtraordinaryClaim 判定 claim-gate.mjs）
+//     也纳入抽查：这类「惊人事件」若只靠内部一致性票放行，正是软文最爱的形态（T2 占比 71% 环境
+//     下论坛源覆盖面太窄，11-14 实证 10/14 confirmed 全无外部防线）。
+//   ② unavailable 三分类记账（unavailableReason）——11-08~11-14 meta 连续 4 天
+//     external_check.unavailable=N 却无法归因（WebSearch 死通道 vs 预算耗尽 vs 票报错），
+//     根修后按原因细分：noSearchChannel（模型自报工具不可用）/ agentError（票 null/异常）/
+//     budget（预算耗尽未轮到），meta.external_check 逐项可观测。
+const externalStats = { targets: 0, corroborated: 0, refuted: 0, unavailable: 0, unavailableBy: { noSearchChannel: 0, agentError: 0, budget: 0 } }
 {
-  const extTargets = voted.filter(c => c && c.survives && !c.isMajorOut && (c.sourceQuality === 'forum' || c.sourceQuality === 'blog'))
+  const extTargets = voted.filter(c => c && c.survives && !c.isMajorOut && !c.externalCheck &&
+    (c.sourceQuality === 'forum' || c.sourceQuality === 'blog' ||
+      (isExtraordinaryClaim(c) && c.sourceQuality !== 'primary')))
   externalStats.targets = extTargets.length
-  if (extTargets.length) log('EXTERNAL-CHECK forum/blog 存活 claim 外部抽查 ' + extTargets.length + ' 条（独立佐证票 ×1，允许 WebSearch）')
+  if (extTargets.length) log('EXTERNAL-CHECK 存活 claim 外部抽查 ' + extTargets.length + ' 条（forum/blog 全量 + 二手源非常规声明；独立佐证票 ×1，主路 grok-search CLI）')
   for (const batch of chunkArr(extTargets, VERIFY_BATCH)) {
     // 9/19 review P3：批间预算闸（纯读不记账）——Verify 死线耗尽不再放行新外部票批，余票走下方兜底 unavailable。
     if (budgetGate.roomTo('Verify') === 0) { log('BUDGET-BREAK External-check 余批跳过（Verify 死线已耗尽，roomTo=0 纯读停止）'); break }
@@ -3337,7 +3395,15 @@ const externalStats = { targets: 0, corroborated: 0, refuted: 0, unavailable: 0 
     res.forEach((r, i) => {
       const c = batch[i]
       const state = externalCheckState(r)
-      if (state === 'unavailable') { c.externalCheck = 'unavailable'; externalStats.unavailable++; return }
+      if (state === 'unavailable') {
+        c.externalCheck = 'unavailable'
+        // 11-14 三分类：票活着且自报 toolsUnavailable → 搜索通道问题；票为 null/坏形状 → 代理/模型故障。
+        const reason = (r && r.toolsUnavailable === true) ? 'noSearchChannel' : 'agentError'
+        c.unavailableReason = reason
+        externalStats.unavailable++
+        externalStats.unavailableBy[reason]++
+        return
+      }
       c.verdicts.push(r)
       if (state === 'refuted') {
         c.refutedCount = (c.refutedCount || 0) + 1
@@ -3353,8 +3419,9 @@ const externalStats = { targets: 0, corroborated: 0, refuted: 0, unavailable: 0 
   }
   // 9/19 review P3 兜底：预算耗尽/批间 break 未轮到的票一律 unavailable——绝不让 forum claim
   // 因「没轮到抽查」而以 undefined externalCheck 走进「已核查」烘焙分支。
+  // 11-14：兜底路径归因 budget（与票故障区分开，meta 可观测）。
   for (const c of extTargets) {
-    if (!c.externalCheck) { c.externalCheck = 'unavailable'; externalStats.unavailable++ }
+    if (!c.externalCheck) { c.externalCheck = 'unavailable'; c.unavailableReason = 'budget'; externalStats.unavailable++; externalStats.unavailableBy.budget++ }
   }
 }
 

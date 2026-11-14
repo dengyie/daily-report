@@ -72,7 +72,9 @@ export async function readBodyTextRaw(host, url) {
       })
       await send('Runtime.enable')
       for (let i = 0; i < Math.ceil(CDP_DEFAULTS.pollMaxMs / CDP_DEFAULTS.pollIntervalMs); i++) {
-        const { result } = await send('Runtime.evaluate', { expression: 'document.body ? document.body.innerText : null', returnByValue: true })
+        const isLast = i === Math.ceil(CDP_DEFAULTS.pollMaxMs / CDP_DEFAULTS.pollIntervalMs) - 1
+        const expr = isLast ? 'document.body ? document.body.innerText : null' : 'document.body && document.readyState !== "loading" ? document.body.innerText : null'
+        const { result } = await send('Runtime.evaluate', { expression: expr, returnByValue: true })
         const v = result?.result?.value
         if (v && String(v).trim()) { text = v; break }
         await new Promise(r => setTimeout(r, CDP_DEFAULTS.pollIntervalMs))

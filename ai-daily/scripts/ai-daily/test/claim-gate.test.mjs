@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isJunkClaim, needsVerification, gateClaims } from '../claim-gate.mjs'
+import { isJunkClaim, needsVerification, gateClaims, isExtraordinaryClaim } from '../claim-gate.mjs'
 
 // 10-04 日报质量审计回归（docs/2026-10-04-claim-quality-gate-design.md §1.1）：
 // 论坛附件标注被提取为可证伪声明 → "image 580×286 7.97 KB" 通过 2-0 核查投票 → 写入生产账本，
@@ -116,4 +116,34 @@ test('gateClaims：分账不丢不改写（对象引用原样透传）', () => {
   assert.equal(clean[0], real, '引用透传（不改写不复制）')
   assert.equal(gateClaims(null).dropped.length, 0, 'null 防御')
   assert.equal(gateClaims([]).clean.length, 0, '空批防御')
+})
+
+// ─── 11-14 external_check 目标扩展：isExtraordinaryClaim（人事/并购/解散关闭/诉讼）───
+// 根修动因：T2 占比 71% 环境下 forum/blog 口径太窄（11-14 实证 10/14 confirmed 全无外部防线）。
+// 非常规声明（组织级事件突变）是软文最爱的形态，仅靠内部一致性票无法识破——二手源命中即进
+// ext 抽查。机械可识别（动词+实体结构），宁滥勿漏（佐证票成本有界：每条 1 张 low-effort 票）。
+
+test('isExtraordinaryClaim：人事变动/并购/解散关闭/诉讼 四族正面形态', () => {
+  const HIT = [
+    'Nvidia 准备解雇ceo黄仁勋，CFO 克雷斯临时接任',       // 11-13 真 T1 头条（人事）
+    'OpenAI 收购 AI 编程初创 Cursor',                     // 并购
+    '英特尔宣布关闭其车载 AI 部门',                        // 关闭
+    'Meta 遭美国司法部反垄断起诉',                        // 诉讼
+    'OpenAI 解散其 AGI Readiness 团队',                   // 解散
+    '孙鹏加入字节跳动出任产品负责人',                      // 11-13 账本实证条目（离职/加入族）
+  ]
+  for (const t of HIT) assert.equal(isExtraordinaryClaim({ claim: t }), true, JSON.stringify(t))
+})
+
+test('isExtraordinaryClaim：常规发布/性能/融资声明不命中（ext 预算不被常规新闻吃掉）', () => {
+  const MISS = [
+    'OpenAI 发布 GPT-6.2，在 SWE-Bench 上得分为 74.3%。',
+    '微软把 Rust 提为一级语言',
+    '谷歌宣布自 2026 年 10 月起调整 Gemini 用量限额',
+    'Gboard 已用基于 TEE 的联邦学习系统训练英语与日语下一词预测模型',
+    '该模型推理吞吐提升 30%',
+    '',                                        // 空串防御
+  ]
+  for (const t of MISS) assert.equal(isExtraordinaryClaim({ claim: t }), false, JSON.stringify(t))
+  assert.equal(isExtraordinaryClaim(null), false, 'null 防御')
 })

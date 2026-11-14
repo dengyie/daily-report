@@ -58,6 +58,15 @@ export const needsVerification = c => {
   return /\d/.test(t) || /[A-Za-z]{2,}/.test(t) || (t.match(/[\u4e00-\u9fff]/g) || []).length >= 10
 }
 
+/** 非常规声明判定（11-14 external_check 目标扩展）：断言组织级事件突变——人事变动/并购/解散/
+ *  关闭/诉讼/停服。这类「惊人事件」在二手源（非 primary）流转时是软文最爱的形态，仅靠内部
+ *  一致性票（文本自洽）无法识破——需外部独立佐证票加防。机械可识别（动词+实体结构），宁滥勿漏：
+ *  命中即进 ext 抽查候选，佐证票成本有界（每条 1 张 low-effort 票）。 */
+export const isExtraordinaryClaim = c => {
+  const t = (c && typeof c.claim === 'string') ? c.claim : ''
+  return /(?:人事|离职|跳槽|解雇|辞职|接任|卸任|罢免|复职)|(?:(?:收购|并购|合并|重组|出售|剥离)|(?:解散|倒闭|破产|关停|关闭|停运|下线|停止)|(?:起诉|诉讼|反垄断|罚款|调查))/.test(t)
+}
+
 /** 批量分账：clean/dropped 两桶，对象引用原样透传（不改写不复制）。 */
 export const gateClaims = claims => {
   const clean = []

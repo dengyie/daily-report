@@ -157,6 +157,19 @@ export const splitSeeds = (seeds, ledger) => {
   return { fresh, reported }
 }
 
+// 票向先验查找（11-14，黄仁勋案缓解）：claim 命中账本近期已报道事件 → 返回该账本条目（fail-open）。
+// 消费方 verifyPrompt 把它烘成「本事件已于 N 天前核查并成稿」的先验——同一事件跨日换 URL 重投时，
+// 内部票不再因引语/日期细节缺失翻面（11-13 实证：T1 源 2-1 confirmed，T2 源 0-2 refuted，
+// 同一事件两轮投票互相打架）。返回 null = 无先验（首日报道，票按默认怀疑态度）。
+export const ledgerPriorFor = (claim, ledger, today, lookbackDays = LEDGER_LOOKBACK_DAYS) => {
+  if (!claim) return null
+  const entries = Array.isArray(ledger) ? ledger : []
+  const recent = entries.filter(e => _withinLookback(e && e.day, today, lookback))
+  if (!recent.length) return null
+  const like = { url: claim.sourceUrl || claim.url || '', tokens: fingerprintTokens([claim.claim, claim.quote].filter(Boolean).join(' ')) }
+  return recent.find(e => storyMatch(like, e)) || null
+}
+
 // prune：只保留近 keepDays 天条目；day 不可解析的条目剔除（账本卫生）。today 缺失 → 原样返回。
 export const pruneLedger = (entries, today, keepDays) => {
   if (!Array.isArray(entries)) return []

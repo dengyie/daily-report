@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import {
   LEDGER_OVERLAP_MIN, LEDGER_SHARE_MIN, LEDGER_LOOKBACK_DAYS, LEDGER_KEEP_DAYS,
   fingerprintTokens, makeLedgerEntry, storyMatch, filterReportedTargets, splitSeeds, pruneLedger,
-  parseReportedLedger, buildYesterdayTopics,
+  parseReportedLedger, buildYesterdayTopics, ledgerPriorFor,
 } from '../ledger.mjs'
 import { ledgerEntriesFromClaims, recordLedger, DEFAULT_LEDGER, PROD_DALLYREPORT_PREFIXES, isProdOutDir } from '../finalize.mjs'
 
@@ -343,6 +343,26 @@ test('buildYesterdayTopics：连续剧 streak——连续多天同事件计数�
 test('buildYesterdayTopics：空账本 / today 不可解析 → []（fail-open，不渲染空骨架）', () => {
   assert.deepEqual(buildYesterdayTopics([], [], '2026-10-03'), [])
   assert.deepEqual(buildYesterdayTopics([makeLedgerEntry('2026-10-02', 'https://x', '某条目内容', false)], [], 'garbage'), [])
+})
+
+// ─── ledgerPriorFor（11-14 票向先验，黄仁勋案缓解）───
+test('ledgerPriorFor：近窗账本命中同事件 → 返回条目；URL 与指纹两路都命中', () => {
+  const ledger = [makeLedgerEntry('2026-11-13', 'https://a.example/nvda-ceo', 'Nvidia 准备解雇ceo黄仁勋，CFO 克雷斯临时接任', false)]
+  // URL 路（同 URL 归一）
+  const byUrl = ledgerPriorFor({ claim: '任何表述', sourceUrl: 'https://a.example/nvda-ceo?utm=x' }, ledger, '2026-11-14')
+  assert.ok(byUrl && byUrl.day === '2026-11-13', 'URL 归一命中')
+  // 指纹路（同事件换 URL/换表述）
+  const byFp = ledgerPriorFor({ claim: 'Nvidia 准备解雇ceo黄仁勋，CFO 克雷斯临时接任', quote: '', sourceUrl: 'https://other.example/x' }, ledger, '2026-11-14')
+  assert.ok(byFp && byFp.day === '2026-11-13', '指纹命中（同事件换 URL）')
+})
+
+test('ledgerPriorFor：超窗/异事件/无账本 → null（fail-open，票保持默认怀疑）', () => {
+  const ledger = [makeLedgerEntry('2026-11-01', 'https://a.example/nvda', 'Nvidia 准备解雇ceo黄仁勋', false)]
+  // 11-14 视角：11-01 超出 3 天回看窗（LEDGER_LOOKBACK_DAYS=3）→ 不注入先验
+  assert.equal(ledgerPriorFor({ claim: 'Nvidia 准备解雇ceo黄仁勋', sourceUrl: 'https://a.example/nvda' }, ledger, '2026-11-14'), null, '超窗不命中')
+  assert.equal(ledgerPriorFor({ claim: '谷歌发布 Gemini 4', sourceUrl: 'https://x/g' }, ledger, '2026-11-02'), null, '异事件不命中')
+  assert.equal(ledgerPriorFor({ claim: 'x', sourceUrl: '' }, null, '2026-11-14'), null, '无账本 fail-open')
+  assert.equal(ledgerPriorFor(null, ledger, '2026-11-14'), null, 'null claim 防御')
 })
 
 // buildYesterdayTopics import（10/03 追踪节）

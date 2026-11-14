@@ -161,15 +161,31 @@ test('reportPrompt title 分轨示例：未确认「某报」与已确认 LFM2.5
 })
 
 // ─── 9/19 F1 外部抽查票契约 ───
-test('externalVerifyPrompt：必须外部搜索找独立证据 + 工具不可用约定 + 预算纪律', () => {
+test('externalVerifyPrompt：必须找到外部独立证据 + 主路宿主 CLI（11-14 根修）+ 工具不可用约定', () => {
   assert.match(PROMPTS, /export const externalVerifyPrompt/, '外部抽查票 prompt 在场（9/19 F1）')
-  const ctx = { WINDOW_LABEL: 'w', WTO: '2026-09-19', DATE: '2026-09-19' }
+  const ctx = { WINDOW_LABEL: 'w', WTO: '2026-09-19', DATE: '2026-09-19', GROK_DIR: 'C:/grok-search' }
   const s = externalVerifyPrompt({ claim: 'C', sourceUrl: 'https://x/1', sourceQuality: 'forum', quote: 'q', publishDate: '2026-09-18' }, ctx)
-  assert.match(s, /必须用外部搜索找独立证据/, '与内部票（禁外部搜索）对立的任务定义')
+  assert.match(s, /必须找到外部独立证据/, '与内部票（禁外部搜索）对立的任务定义')
   assert.match(s, /至少一个独立来源/, '佐证判定标准')
-  assert.match(s, /refuted=false 且 toolsUnavailable=true/, '工具不可用 → schema 字段 toolsUnavailable（9/19 review P2-2：纯文本约定编排层无法消费，已改字段通道）')
-  assert.match(s, /最多 2 次搜索 \+ 1 次 WebFetch/, '外部票预算纪律')
+  assert.match(s, /refuted=false 且 toolsUnavailable=true/, '工具不可用 → schema 字段 toolsUnavailable（9/19 review P2-2）')
+  // 11-14 根修：主路 = 宿主 grok-search CLI（gateway 三方模型 WebSearch 是死通道，实测
+  // server_tool_use=0、一次空壳一次自述无工具）；WebSearch 降级为可选辅路
+  assert.match(s, /scripts\/search\.js --days 7 --extra 4/, '主路宿主 CLI 在场（Tavily/Firecrawl/Exa 真实联网）')
+  assert.match(s, /sources\.items/, '只看 URL 卡片（answer.text 降级时不可信）')
+  assert.match(s, /辅路·可选.*WebSearch/, 'WebSearch 降级为辅路')
+  assert.match(s, /立即放弃辅路/, '辅路死通道不反复尝试')
   assert.match(s, /禁止截图/, '截图禁令保留')
+})
+
+// ─── 11-14 票向先验（黄仁勋案缓解）───
+test('verifyPrompt：ledgerPrior 注入跨日先验行；无先验 prompt 不变', () => {
+  const base = { WINDOW_LABEL: 'w', REFUTATIONS_REQUIRED: 1, VOTES_PER_CLAIM: 2, WFROM: '2026-09-18', WTO: '2026-09-19' }
+  const c = { claim: 'Nvidia 准备解雇ceo黄仁勋', sourceUrl: 'https://linux.do/t/1', sourceQuality: 'secondary', quote: 'q' }
+  const withPrior = verifyPrompt(c, { ...base, ledgerPrior: { day: '2026-11-13', url: 'https://x/1' } })
+  assert.match(withPrior, /已于 2026-11-13 核查通过并成稿/, '先验行在场（day 注入）')
+  assert.match(withPrior, /新增的、与已报道版本矛盾/, '先验仅压翻面，新增矛盾断言仍可否决')
+  const without = verifyPrompt(c, base)
+  assert.doesNotMatch(without, /跨日先验/, '无先验 → 清单 0 行不出现（首日报道保持默认怀疑）')
 })
 
 test('reportPrompt §4：status 改为照抄素材行 Status（编排层烘焙，禁止自行推导）', () => {

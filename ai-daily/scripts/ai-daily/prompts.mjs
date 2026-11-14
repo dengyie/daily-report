@@ -89,8 +89,11 @@ export const fetchPrompt = (src, ctx) => {
 }
 
 // externalVerifyPrompt（9/19 F1 新增）：forum/blog 来源的存活 claim 加 1 张独立佐证票。
-// 与内部票（verifyPrompt）的根本区别：**必须**用 WebSearch/WebFetch 找独立证据——内部票禁外部搜索、
-// 只做文本自洽判断，「引语整齐但不实」的转述/软文恰是它的盲区。票可用的四种结果编排层消费
+// 与内部票（verifyPrompt）的根本区别：**必须**找到外部独立证据——内部票禁外部搜索、
+// 只做文本自洽判断，「引语整齐但不实」的转述/软文恰是它的盲区。11-14 根修：gateway 三方模型
+// 的 WebSearch 是死通道（实测 server_tool_use.web_search_requests=0，两次调用一次空壳一次模型
+// 自述「无搜索工具」），主路改走宿主 grok-search CLI（--extra Tavily/Firecrawl/Exa 真实联网，
+// Grok 上游 503 也照常出卡）+ WebFetch；WebSearch 降级为可选辅路。票可用的四种结果编排层消费
 // （externalCheckState 三态判定，schemas.mjs）：
 //   refuted=true → claim 翻转为已否决；refuted=false + toolsUnavailable 未置 → externalCheck=corroborated；
 //   工具不可用 → refuted=false 且 **toolsUnavailable=true**（schema 字段，非 evidence 文本约定——
@@ -98,22 +101,35 @@ export const fetchPrompt = (src, ctx) => {
 //   编排层把该 claim 的 status 烘焙为「未核查」（不冒充已核查）。
 export const externalVerifyPrompt = (c, ctx) =>
   '## 独立佐证票（external checker）\n\n' +
-  '下列声明已通过 2+1 张内部一致性票（引语/日期/语气自洽），但内部票**禁止外部搜索**，无法发现「引语整齐但事件不实」的转述/软文。你的任务相反：**必须用外部搜索找独立证据**。\n\n' +
+  '下列声明已通过 2+1 张内部一致性票（引语/日期/语气自洽），但内部票**禁止外部搜索**，无法发现「引语整齐但事件不实」的转述/软文。你的任务相反：**必须找到外部独立证据**。\n\n' +
   '窗口：' + ctx.WINDOW_LABEL + '。\n\n## 声明\n' + '"' + c.claim + '"\n\n来源：' + c.sourceUrl + ' (' + c.sourceQuality + ')，页面日期：' + (c.publishDate || '未知') + '\n引语："' + c.quote + '"\n\n## 执行\n' +
-  '1. WebSearch 搜索声明中的实体+事件关键词（可加「' + (ctx.WTO || ctx.DATE) + '」限定时效）；最多 2 次搜索 + 1 次 WebFetch（打开最相关的搜索结果页确认）。\n' +
-  '2. 判定：找到**至少一个独立来源**（非本来源、非转贴/镜像本来源的聚合页）支撑声明的核心事实 → refuted=false；搜索后无任何独立来源支撑、或找到相反证据、或该「事件」只在论坛/自媒体流转而无任何权威侧消息 → refuted=true。\n' +
-  '3. 搜索工具不可用/全部失败 → 返回 **refuted=false 且 toolsUnavailable=true**，evidence 写明失败原因（编排层会将该 claim 以未核查口径呈现，不会冒充已核查）。\n\n' +
+  // 11-14 根修：gateway 三方模型的 WebSearch 实为死通道（server_tool_use=0、返回空壳/自述无工具），
+  // 改走宿主 grok-search CLI（Tavily/Firecrawl/Exa 真实联网，即使 Grok 上游 503 也降级出卡）+
+  // WebFetch 打开独立来源确认。WebSearch 降级为可选尝试（部分 Anthropic 渠道仍可用）。
+  '1.【主路·必做】宿主搜索（真实联网，含 Tavily/Firecrawl/Exa 多通道）：cd ' + ctx.GROK_DIR + " && ./scripts/search.js --days 7 --extra 4 --source-chars 300 --max-chars 3000 '<声明中的实体+事件关键词，如：Thinking Machines Inkling 2 Small 594B 发布>'\n" +
+  '   只看返回的 sources.items URL 卡片（provider/url/title/published_date/snippet）判断独立佐证；不看 answer.text（降级时 answer 只是原始摘录）。\n' +
+  '2.【辅路·可选】如主路无果，最多 1 次 WebSearch + 1 次 WebFetch（打开最相关的结果页确认）。WebSearch 返回空结果或提示无工具 → 立即放弃辅路，勿反复尝试。\n' +
+  '3. 判定：找到**至少一个独立来源**（域名非本来源、非转贴/镜像本来源的聚合页）支撑声明的核心事实 → refuted=false；搜索后无任何独立来源支撑、或找到相反证据、或该「事件」只在论坛/自媒体流转而无任何权威侧消息 → refuted=true。\n' +
+  '4. 主路命令执行失败（CLI 报错/无 sources）且辅路也无果 → 返回 **refuted=false 且 toolsUnavailable=true**，evidence 写明失败原因（编排层会将该 claim 以未核查口径呈现，不会冒充已核查）。\n\n' +
   '纪律：禁止截图/图片输入。Structured output only. Evidence 简短具体（≤80 字，注明佐证/否证来源域名）。'
 
 // verifyPrompt 需要 VOTES_PER_CLAIM/REFUTATIONS_REQUIRED，经 ctx 传入。
+// 11-14 票向先验（黄仁勋案缓解）：ctx.ledgerPrior 为账本命中条目（ledgerPriorFor，template 层
+// 按天缓存）时注入「本事件已于 N 天前核查并成稿」——同一事件跨日换 URL 重投，内部票不再因
+// 次要来源引语细节缺失翻面。null → 不注入（首日报道保持默认怀疑态度）。
 export const verifyPrompt = (c, ctx) => {
   const isPrimary = c && c.sourceQuality === 'primary'
   const defaultLine = isPrimary
     ? '默认 refuted=false：一手源正文已抓、引语覆盖声明核心数字/专名即存活。仅当声明断言明显超出引语（引语只谈 X 却断言 Y）、日期明确超窗、或明显营销/标题党时才 refuted=true。'
     : '默认 refuted=true，除非证据充分支撑。'
+  const prior = ctx && ctx.ledgerPrior
+  const priorLine = prior && prior.day
+    ? '\n0. **跨日先验**：本事件已于 ' + prior.day + ' 核查通过并成稿（账本命中）。换源重投不改变事件本身的核查结论——除非本声明包含**新增的、与已报道版本矛盾**的断言，勿仅因本来源引语/日期细节不及前源而翻面。\n'
+    : ''
   return '## 对抗性核查票 ' + '(voter)\n\n' +
   '请对下列声明持怀疑态度，尝试证伪。≥' + ctx.REFUTATIONS_REQUIRED + '/' + ctx.VOTES_PER_CLAIM + ' 票证伪即否决。\n\n' +
   '窗口：' + ctx.WINDOW_LABEL + '。\n\n## 声明\n' + '"' + c.claim + '"\n\n来源：' + c.sourceUrl + ' (' + c.sourceQuality + ')，页面日期：' + (c.publishDate || '未知') + '，条目标注日期：' + (c.date || '未知') + '\n引语："' + c.quote + '"\n\n## 清单\n' +
+  priorLine +
   '1. 引语是**逐字抄录的完整支撑句**（契约要求覆盖声明全部细节——日期/数字/机构/对比）。声明中的细节凡能在引语中逐字溯源即视为被支撑；仅当声明断言明显超出引语范围（引语只谈 X 却断言 Y）才算过度引申。引语不是全文≠证据不足，勿因引语未铺陈全背景而否决。\n2. 时效：**窗口为 [' + (ctx.WFROM || ctx.DATE) + ', ' + (ctx.WTO || ctx.DATE) + ']**。事件/发布日期明显在窗口外（数天前/数周前/上月）→ refuted=true；页面日期在窗口内但内容陈述的是旧事件，按**事件实际发生日**判定，日期明确超窗仍 → refuted=true；无法判定日期则不因时效否决。\n3. 来源质量与声明强度是否匹配？（惊人声明需一手源）\n4. 是否营销话术/吹嘘/标题党/论坛猜测？（→ refuted=true）\n\n5. **禁止使用 WebSearch/WebFetch 等外部搜索工具**——本核查只依据上面给出的引语/来源/日期/声明做内部一致性判断，外部搜索会烧掉大量 token。\n\n' + defaultLine + '\n\nStructured output only. Evidence 简短具体（≤80 字）。'
 }
 
