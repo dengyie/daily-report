@@ -50,6 +50,32 @@ test('isJunkClaim：残余语义噪声如实不拦（设计 §5 覆盖边界—�
   for (const t of RESIDUAL) assert.equal(isJunkClaim({ claim: t }), false, '机械模式不判语义——诚实锁定覆盖边界')
 })
 
+// ─── 11-13 质量闸补齐：Discourse 附件名直出形态（无 'image ' 前缀）漏网实证 ───
+// fixture 逐字取自 2026-11-13 verified-claims.json unverified 数组——8 条未核里 2 条纯图片文件名、
+// 1 条文件名+评论残片。既有模式表假设 'image ' 前缀必在，论坛 mint 路没有该前缀 → 全部漏网。
+
+const JUNK_11_13 = [
+  'IMG_0610 1293×1056 127 KB',                                     // 纯附件标注（IMG_ 文件名开头）
+  '77d5d7ae6d3969bd8f66db74d573e3f38ed7f6a4 1320×1735 179 KB',     // 哈希文件名开头
+  'IMG_4628 1290×621 108 KB 不会真的是老黄的D戳破AI泡沫吧',           // 文件名 + 尾部评论残片
+]
+
+test('isJunkClaim：11-13 实证附件名直出形态逐条拦截（回归金标准）', () => {
+  for (const t of JUNK_11_13) assert.equal(isJunkClaim({ claim: t }), true, JSON.stringify(t))
+  assert.equal(isJunkClaim({ claim: 'photo_2026-11-13.png' }), true, '图片扩展名文件名直出')
+  assert.equal(isJunkClaim({ claim: 'screenshot 2026-11-13 at 10.24.11.jpeg' }), true, '带空格的文件名+扩展名')
+})
+
+test('isJunkClaim：11-13 形态反例不误杀（真实声明锁死）', () => {
+  const REAL = [
+    'Nvidia 准备解雇ceo黄仁勋，CFO 克雷斯临时接任',                     // 11-13 真 T1 头条（同源同日）
+    'IMG 架构在推理时吞吐提升 25%',                                    // IMG 大写开头但非附件名（无数字序号）
+    '该分辨率 1293×1056 的截图显示模型输出了错误答案',                   // 尺寸对在句中、无附件名开头
+    'OpenAI 发布 GPT-6.2，在 SWE-Bench 上得分为 74.3%。',               // 正常实体声明
+  ]
+  for (const t of REAL) assert.equal(isJunkClaim({ claim: t }), false, JSON.stringify(t))
+})
+
 test('needsVerification：无实质内容不烧核查票（三分支与边界）', () => {
   assert.equal(needsVerification({ claim: '纯中文碎片句子测试' }), false, '9 CJK 无数字无拉丁 → 不核')
   assert.equal(needsVerification({ claim: '纯中文碎片句子测试十条' }), true, '10 CJK 成句 → 核')

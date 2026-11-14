@@ -236,6 +236,13 @@ meta.json 另有 `ledger_recorded`（recorded/skipped/failed，finalize 回写�
 
 ## 13. 变更记录
 
+- **2026-11-14（11-13 黄仁勋 case 复盘 → 质量闸三修）**：深想「怎么保证日报质量」后把结论落成三件结构修复（11-13 的 8 条 unverified 全为 linux.do 社区噪声、6 条 confirmed 全 T1 的数据支撑）：
+  - **[gate·附件名直出伪 claim]** 11-13 unverified 里 3 条 Discourse 图片文件名伪 claim（`IMG_0610 1293×1056 127 KB`、`77d5d7ae…f6a4 1320×1735 179 KB`、`IMG_4628 1290×621 108 KB 不会真的是…`）漏过 claim-gate——既有模式表假设 `image ` 前缀必在，论坛 mint 路附件名直出没有该前缀。`claim-gate.mjs` 补四类机械模式：IMG_ 序号开头 / ≥16 位十六进制哈希开头 / 图片扩展名直出（含带空格名）/ 附件名开头+宽高对（尾部评论残片不影响判定）。**11-13 真实数据回放：3 垃圾全拦、6 confirmed 零误杀**；反例锁死（`IMG 架构吞吐提升 25%`、`该分辨率 1293×1056 的截图…` 不误杀）。
+  - **[boards·outlink 假 primary 域名封顶]** 黄仁勋链路复盘实证：linuxdo-outlink 的 sourceQuality 由 fetch 代理自判（只看页面长相，无域名真伪校验），本次真身 nvidianews 通过了每一道门——机制上社区帖外链到转载/自媒体/仿冒域同样能拿 primary、骗过 verifyPrompt 的一手源宽松默认（默认 refuted=false）。新增 `capOutlinkQuality`（boards.mjs 纯函数，与 sourceTier 同域）：`found_via==='linuxdo-outlink'` 且 primary 的来源/claim，域名必须命中 TIER1_HOSTS（host 后缀判定）否则封顶 secondary 并计数；template fetch 绑定点接线，`meta.outlink_quality_capped` 入账。真 T1 回放行为不变、仿冒域 `openai.com.evil.io` 不借 T1 通票（4 行为测试）。
+  - **[template·breaker 跳闸阶段戳]** `breaker_open:consecutive_failures:3@fetch:github.com` 看不出跳闸发生时处于哪个阶段（早期跳闸拖累全天 vs 尾部跳闸影响有限）。BREAKER 包装器化：跳闸瞬间（open 由 false 翻 true 的那一次 record）盖 `_TRIP_STAMP='@stage=<当前阶段>@t=<累加器秒>s'`（`_CURRENT_STAGE` 在五个 phase() 切换点跟踪），degraded 旗标与 `meta.breaker.tripStamp` 双消费；stats getter 透传。两个旧模板文本锁随包装器化更新（resetConsecutive 断言改为从 phase('Discover') 起找调用点，防包装器定义处误配）。
+  - **认识论边界（运维文档化，不写代码）**：对抗投票验证「材料↔来源一致」，官方 T1 页面是链条终点；extraordinary claim（人事变动/收购/倒闭/安全事件）真伪由人工扫标题层交叉确认（每天 ~30 秒），工具层不可再兜底——已写入 vault 运维文档速读段。
+  - 全量 **537 项 528 pass / 0 fail / 9 有意 skip**；产物 3778 行 `--sync-vault` 已同步。**11-15 08:40 起生效；观察点：新报告 unverified 应无图片文件名伪 claim、meta 应出现 outlink_quality_capped / breaker.tripStamp 字段。**
+
 - **2026-11-12（11-12 事故三修 · `19569a4`/`b936f8a`）**：08:40 定时 run `GATEWAY-ROUTE ABORT`（当日空转）+ 09:42 手动重跑验收，连环根修三件：
   - **[runner·路由探针单发 `19569a4`]** 路由选择块只调一次 `probe_gateway`——gemini-3.8-flash 上游负载均衡 TTFT 抖动（504 `loadbalancer: time to first token timeout`，同请求 5s~91s 方差实测）一击即弃 → 当日放弃。debug 追踪另实锤并发问题：上游某渠道额度耗尽时 403 `insufficient_user_quota` 原样透传（"余额 $0.14" 实为**渠道级**余额，非用户钱包——用户侧确认无需充值）。根修：改走 launch 段同款 `probe_wait`（3 次重试 + 30s 间隔），渠道抖动靠重复请求消化；ABORT 消息带末次 `PROBE_LAST_OUT` 便于归因。网关侧需求（用户已提）：渠道 403 不透传、自动换渠道。
   - **[render·合成乱码门 `b936f8a`]** 11-11 成品三处合成期漏网（`sources.json` 干净、成品正文污染）：FFFD×2（「吞吐�� x86」）、生僻错字（「工作巟。」U+5DDF）、无关短语插入（「5 倍批发契约合约条款第 7 条」——`synth_body_hallucination:5` 的漏网之鱼）。`extractSynthAtoms` 只提拉丁/数字原子，编码损坏完全在盲区。新增 `synthMojibakeHit` 确定性乱码门（FFFD + CJK Ext-A/兼容/私有区）→ 命中整段替换为 claim 原文。**误杀实测收敛**：常用区金标外单字判定不实现——金标是压缩改写语料，正常同义换词（'准确率' vs 金标'成功率'）即触发，误杀率不可接受；「批发契约」类搭配判定同样暂缓。小而准优先。

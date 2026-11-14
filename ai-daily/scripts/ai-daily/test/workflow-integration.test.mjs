@@ -279,7 +279,9 @@ test('模板 P1：配额内 linuxdo+snippet 在 Fetch 循环前 mint，并从 fe
 test('模板 P1：Discover 入口 BREAKER.resetConsecutive() 在代理批循环前', () => {
   // Harvest 连续失败会垫高 Discover 门口 consecutive；阶段隔离只清 consecutive，不清 failures/reason。
   const idxPhase = TPL.indexOf("phase('Discover')")
-  const idxReset = TPL.indexOf('BREAKER.resetConsecutive()')
+  // 11-13 断路器包装器化后，定义处 `resetConsecutive: () => _BREAKER.resetConsecutive()` 也含此串——
+  // 取 Discover 之后的**调用点**（indexOf from phase），定义点不算。
+  const idxReset = TPL.indexOf('BREAKER.resetConsecutive()', idxPhase)
   const idxLoop = TPL.indexOf("for (const batch of chunkArr(DISCOVER_GROUPS, DISCOVER_BATCH))")
   assert.ok(idxPhase >= 0 && idxReset >= 0 && idxLoop >= 0, 'Discover phase / resetConsecutive / 批循环都在场')
   assert.ok(idxReset > idxPhase, 'resetConsecutive 在 phase(Discover) 之后')

@@ -253,10 +253,28 @@ WALL_CALIBRATOR.start()
 // 8/31 P1-①：计数型断路器——不依赖时钟（饱和下计数信号依然准确），连续 3 次或累计 5 次代理失败即跳闸，
 // 之后不再放行昂贵的 Discover 代理批，直连 static-fallback → Fetch。
 // 8/31 实证：Harvest 烧 70min、Discover 再烧 129min，而此间 DISCOVER-FAIL 早已密集出现。
-const BREAKER = makeCircuitBreaker({
+// 11-13 观测性补强：breaker_open 旗标只有 '@label'（fetch:github.com）看不出跳闸发生时**处于哪个阶段**、
+// 早期跳闸（拖累全天）还是尾部跳闸（影响有限）——用 _CURRENT_STAGE 跟踪 phase() 切换点，
+// makeCircuitBreaker 的 record 包装在跳闸瞬间盖上阶段戳 + 累加器墙钟秒数，旗标形如
+// breaker_open:consecutive_failures:3@fetch:github.com@stage=Discover@t=1902s。
+let _CURRENT_STAGE = 'Init'
+const _STAMP = () => '@stage=' + _CURRENT_STAGE + '@t=' + Math.round(now() / 1000) + 's'
+const _BREAKER = makeCircuitBreaker({
   consecutive: typeof args.breakerConsecutive === 'number' ? args.breakerConsecutive : 3,
   total: typeof args.breakerTotal === 'number' ? args.breakerTotal : 5,
 })
+const BREAKER = {
+  record: (ok, label) => {
+    const preOpen = _BREAKER.open()
+    _BREAKER.record(ok, label)
+    if (!preOpen && _BREAKER.open()) _TRIP_STAMP = _STAMP()  // 跳闸瞬间盖章（记录端 degradedFlags 消费）
+  },
+  open: () => _BREAKER.open(),
+  reason: () => _BREAKER.reason(),
+  resetConsecutive: () => _BREAKER.resetConsecutive(),
+  get stats() { return _BREAKER.stats },
+}
+let _TRIP_STAMP = null
 const probeGateway = async label => {
   const t0 = now()
   // withDeadline reject 透传后，探针必须自己接住——advisory 失败不得炸 workflow。
@@ -339,6 +357,7 @@ for (const f of feedSources) {
   feedMap.get(k).boards.add(f.board)
 }
 const uniqueFeeds = [...feedMap.values()]
+_CURRENT_STAGE = 'Harvest'
 phase('Harvest')
 // 批量 Harvest（8/15 第九项优化）：14 个独立 feed 并行代理 → 5 个分组代理，每组依次跑完组内 feed、
 // 条目标注来源 feed 键；组代理 3+2 两批串行执行——今天 14 并发同时打 deepseek 网关是 524 风暴的最大诱因。
@@ -409,6 +428,7 @@ const ctxP = { ...ctxBase, BOARDS, MAX_URLS_PER_BOARD, digestForBoard, digestFor
 log('Harvest: ' + HARVEST_GROUPS.length + ' groups over ' + uniqueFeeds.length + ' unique feeds → digests ready（14 并发→' + HARVEST_GROUPS.length + ' 分组串行）')
 
 // ─── Phase Discover ───
+_CURRENT_STAGE = 'Discover'
 phase('Discover')
 // 9/01 覆盖韧性：Harvest 连续失败会垫高 consecutive；Discover 入口只清连续计数，
 // 不清 failures/reason。已跳闸（Harvest 已烧穿阈值）仍 open，代理余批照跳。
@@ -693,6 +713,7 @@ if (REPORTED_LEDGER) {
 	// 09-20 实证：mint 在配额后 → 8 席 linuxdo-cdp 先占满 MAX_FETCH，官方/一手源整板被 budgetDropped。
 	// mint 只计入 LINUXDO_MAX_SOURCES；铸出的 URL 从 boardURLMap 剔除，不占 MAX_FETCH。
 	let indexClaimDroppedTotal = 0  // 索引页缺文章 URL 的丢弃数（degraded 旗标 index_claim_dropped:N；已丢弃，未进引用）
+	let outlinkQualityCapped = 0    // linuxdo-outlink 假 primary 被封顶 secondary 的计数（11-13 质量闸，meta.outlink_quality_capped）
 	const extracted = []
 	const mintedUrls = new Set()
 	{
@@ -740,6 +761,7 @@ if (fetchTargets.length) fetchBatches.push(fetchTargets.slice(0, FETCH_FIRST_BAT
 for (let i = FETCH_FIRST_BATCH; i < fetchTargets.length; i += FETCH_BATCH) fetchBatches.push(fetchTargets.slice(i, i + FETCH_BATCH))
 
 // ─── Phase Fetch + Extract ───
+_CURRENT_STAGE = 'Fetch'
 phase('Fetch')
 let stageFetchRan = false  // 8/27 一次性状态：Fetch 首批是否已正常启动（预算记账过 + 会在 await 前置位）
 let salvaged = false  // 8/26 修复：救护首批已标记——余批整批 break，不再碰 budgetGate('Fetch')，避免把已抓过批的 Fetch 误记成「整段跳过」
@@ -775,6 +797,11 @@ for (const batch of fetchBatches) {
           indexClaimDroppedTotal += bound.indexClaimDropped
           log('INDEX-CLAIM-DROPPED ' + hostOf(src.url) + ' 有 ' + bound.indexClaimDropped + ' 条索引页 claim 缺合法文章 sourceUrl → 已丢弃，未进入引用')
         }
+        // 11-13 质量闸：linuxdo-outlink 升 primary 需域名命中 TIER1_HOSTS（黄仁勋 case 复盘根修）——
+        // fetch 代理自判 primary 看的是页面长相不是域名真伪，社区帖外链到转载/仿冒页同样能骗过
+        // verify 的一手源宽松默认。真 T1（如 nvidianews）行为不变；非 T1 封顶 secondary 并计数。
+        const _capped = capOutlinkQuality(bound)
+        if (_capped.capped) outlinkQualityCapped += _capped.capped
         return bound
       }).catch(e => {
         // 9/19 F10：吞错补 log——.then 映射段抛错与代理真实失败在账面上不可区分的问题。
@@ -848,6 +875,7 @@ if (totalClaims > 0) {
 	  return roundRobinTake(quotaMap, MAX_VERIFY)
 	})()
 	log('Verify: ' + rankedClaims.length + ' claims across ' + boardKeysV.length + ' boards [' + [...quota.entries()].map(e => e[0] + ':' + e[1]).join(' ') + '], adaptive 2+1 votes')
+_CURRENT_STAGE = 'Verify'
 phase('Verify')
 // 全 Verify 阶段共享一个阶梯 t0：6 票并发不得各自重新吃满 LADDER_BUDGET_MS（烟测 420s 已见后票把预算叠高）。
 const verifyLadderT0 = now()
@@ -1188,6 +1216,7 @@ const gatedMisses = outOfWindow.map(c => ({ name: c.claim.slice(0, 36) + (c.clai
 const windowMisses = foldWindowMisses(discoveredMisses.concat(gatedMisses))
 
 // ─── Synthesize（report 是一次性昂贵代理；入口与总墙钟脱钩）───
+_CURRENT_STAGE = 'Synthesize'
 phase('Synthesize')
 // 8/17 原意：report 前先判总墙钟 + 探针，超限即降级防挂起。
 // 8/30：探针从「否决权」降为「只观察」（8/29 单发 20s 探针超时曾把 9 条已确认内容整块降 raw）。
@@ -1305,7 +1334,7 @@ if (recoveredBoards.size > 0) degradedFlags.push('discovery_recovered:' + [...re
 if (budgetSkipped.length > 0) degradedFlags.push('budget_skipped:' + budgetSkipped.join('+'))
 // 8/31 P1：断路器跳闸与墙钟饥饿都必须在产物里**可见**——8/31 那种 run 的病症（代理成批失败、
 // 事件循环饱和让墙钟低估 4.7–7.6×）在 meta/md 里完全无痕，只能靠翻 4h 的 workflow 日志才发现。
-if (BREAKER.open()) degradedFlags.push('breaker_open:' + BREAKER.reason())
+if (BREAKER.open()) degradedFlags.push('breaker_open:' + BREAKER.reason() + (_TRIP_STAMP || ''))
 if (WALL.observations > 0 && WALL.peakFactor > 1.5) degradedFlags.push('wallclock_starved:' + WALL.peakFactor.toFixed(1) + 'x')
 // 8/23 第二十一项：linuxdo 组失败/降级 → linuxdo_degraded 独立降级旗标（no_cdp_host 跳过不算降级）。
 const linuxdoFailedRows = discoverRows.filter(d => d.linuxdoFailed)
@@ -1397,6 +1426,8 @@ const metaJson = JSON.stringify({
   // 9/19 linuxdo 治理账目：出链帖转真实 fetch 目标数 / 空 snippet 丢弃数（不再烧 fetch 配额）。
   linuxdo_outlink_fetch: linuxdoOutlinkCount,
   linuxdo_empty_snippet_dropped: linuxdoEmptySnippetDropped,
+  // 11-13 质量闸账目：outlink 假 primary 被封顶 secondary 的计数（0 = 无需封顶，正常）。
+  outlink_quality_capped: outlinkQualityCapped,
   // 9/19 F1 外部抽查账目：targets=应抽查的 forum/blog 存活 claim 数；corroborated=独立佐证；
   // refuted=被佐证票否决；unavailable=票不可用（status 已烘焙为未核查，degraded 旗标可见）。
   external_check: externalStats,
@@ -1423,7 +1454,7 @@ const metaJson = JSON.stringify({
     verify: { tried_total: ladderTried.verify.length, by_model: ladderTried.verify.reduce((m, x) => { m[x] = (m[x] || 0) + 1; return m }, {}) },
     exhausted: [...ladderExhaustedStages],
   },
-  breaker: { open: BREAKER.open(), reason: BREAKER.reason(), ...BREAKER.stats },
+  breaker: { open: BREAKER.open(), reason: BREAKER.reason(), tripStamp: _TRIP_STAMP, ...BREAKER.stats },
   // md_written 语义（8/18 重构后）：report 是否成功（1=完整版 md 进 payloads.md，0=降级版 md 仍落盘）——不再是 workflow 写盘计数。
   md_written: report ? 1 : 0, artifacts_failed: [],
   coverage: coverage, noNews_companies: noDynamicCompanies, covered_elsewhere_companies: [...matchedCompany],

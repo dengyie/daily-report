@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { auditReportBodies, extractSynthAtoms } from '../render-md.mjs'
-import { sourceTier } from '../boards.mjs'
+import { sourceTier, capOutlinkQuality } from '../boards.mjs'
 import { computeClusterHeat, isRoundupCluster } from '../cluster.mjs'
 import { recordFetchReceipts, collectReceiptUrls } from '../finalize.mjs'
 
@@ -109,6 +109,61 @@ test('sourceTier：官方一手域名 T1（含子域），媒体 T2，垃圾输�
   assert.equal(sourceTier(null), 'T2')
   // 仿冒域（openai.com.evil.io）不得命中：host 后缀判定
   assert.equal(sourceTier('https://openai.com.evil.io/news'), 'T2')
+})
+
+// ─── 11-13 质量闸（黄仁勋 case 复盘）：outlink 假 primary 域名封顶 ───
+
+test('capOutlinkQuality：11-13 黄仁勋 fixture 回放——真 T1（nvidianews）primary 行为不变', () => {
+  const bound = {
+    url: 'https://nvidianews.nvidia.com/news/nvidia-announces-ceo-transition',
+    title: 'Nvidia准备解雇ceo黄仁勋（更新：黄仁勋已辞去Nvidia CEO）',
+    found_via: 'linuxdo-outlink', board: 'linuxdo',
+    sourceQuality: 'primary',
+    claims: [{ claim: '黄仁勋已辞去 Nvidia CEO，CFO 克雷斯临时接任', sourceUrl: 'https://nvidianews.nvidia.com/news/nvidia-announces-ceo-transition', sourceQuality: 'primary' }],
+  }
+  const r = capOutlinkQuality(bound)
+  assert.equal(r.capped, 0, '真 T1 不封顶')
+  assert.equal(bound.sourceQuality, 'primary')
+  assert.equal(bound.claims[0].sourceQuality, 'primary')
+})
+
+test('capOutlinkQuality：非 T1 域（转载/自媒体/仿冒）outlink primary → 封顶 secondary 并计数', () => {
+  // HIGH_VALUE_OUTLINK_RE 白名单含 techcrunch 等媒体域——社区帖引到媒体页本就该是 secondary
+  const bound = {
+    url: 'https://techcrunch.com/2026/11/13/some-repost/',
+    found_via: 'linuxdo-outlink', board: 'linuxdo',
+    sourceQuality: 'primary',  // fetch 代理看页面长相误判（无域名校验时的真实行为）
+    claims: [
+      { claim: '某模型发布', sourceUrl: 'https://some-blog.io/post', sourceQuality: 'primary' },
+      { claim: '另一发布', sourceUrl: 'https://techcrunch.com/2026/11/13/x/', sourceQuality: 'primary' },  // 源页自身 = T2
+    ],
+  }
+  const r = capOutlinkQuality(bound)
+  assert.equal(r.capped, 3, '源 + 2 claim 全封顶')
+  assert.equal(bound.sourceQuality, 'secondary')
+  assert.equal(bound.claims[0].sourceQuality, 'secondary')
+  assert.equal(bound.claims[1].sourceQuality, 'secondary')
+})
+
+test('capOutlinkQuality：仿冒域 openai.com.evil.io 不得借 T1 通票（host 后缀判定）', () => {
+  const bound = {
+    url: 'https://openai.com.evil.io/news/ceoresign', found_via: 'linuxdo-outlink',
+    sourceQuality: 'primary', claims: [{ claim: '假官宣', sourceQuality: 'primary' }],
+  }
+  const r = capOutlinkQuality(bound)
+  assert.equal(r.capped, 2, '仿冒域全封顶——本闸的存在意义')
+  assert.equal(bound.sourceQuality, 'secondary')
+})
+
+test('capOutlinkQuality：非 outlink 通道与非 primary 质量零操作（审计透传）', () => {
+  const forum = { url: 'https://some-forum.io/t/1', found_via: 'linuxdo-cdp', sourceQuality: 'forum', claims: [] }
+  assert.equal(capOutlinkQuality(forum).capped, 0)
+  assert.equal(forum.sourceQuality, 'forum', 'forum 不动')
+  const staticSrc = { url: 'https://qbitai.com/', found_via: 'static-fallback', sourceQuality: 'primary', claims: [] }
+  assert.equal(capOutlinkQuality(staticSrc).capped, 0, 'static-fallback 不归本闸（自有索引页治理）')
+  const secondary = { url: 'https://blog.example.io/x', found_via: 'linuxdo-outlink', sourceQuality: 'secondary', claims: [] }
+  assert.equal(capOutlinkQuality(secondary).capped, 0, '本就 secondary 无需封顶')
+  assert.equal(capOutlinkQuality(null).capped, 0, 'null 防御')
 })
 
 // ─── 11-10 P2-②/P3（AIHOT 借鉴）：事件热度 + ROUNDUP ───

@@ -9,21 +9,32 @@
 // verify 之外（最多落 unverified 池，永不可能 confirmed）；再漏的靠 fetch prompt 提取卫生规则
 // 减少发生——三层防御，危害上限被 substance 门封顶（设计 §4/§5）。
 
-// 确定性垃圾模式（全部锚定 10-04 实证形态；正则即文档，测试用当日真实垃圾原文做 fixture。
+// 确定性垃圾模式（全部锚定实证形态；正则即文档，测试用当日真实垃圾原文做 fixture。
 // 尺寸分隔符收 [×xX]——提取器可能产出 ASCII x（image 580x286），10-04 复审 Suggestion-3）
+// 11-13 实证补齐（Discourse 附件名前缀 image 常被省略，直接是文件名开头）：
+//   'IMG_0610 1293×1056 127 KB' / '77d5…f6a4 1320×1735 179 KB'——既有 ① 假设 'image ' 前缀
+//   必在，论坛 mint 路的附件标注没这个前缀 → 漏网进 unverified 池污染待核实小节。
+const _DIM = /\d{3,5}\s*[×xX]\s*\d{3,5}/                 // 1293×1056（纯宽高对，两侧各 ≥3 位）
 const JUNK_RES = [
   /^image\s+\d+[×xX]\d+/i,                                 // 附件尺寸标注开头（image 580×286 7.97 KB）
   /^\d+(\.\d+)?\s*(KB|MB|GB)\b/i,                      // 纯大小串开头
   /(^|\s)image\s+\d+[×xX]\d+\s+\d+(\.\d+)?\s*(KB|MB)\b/i,  // 内嵌附件标注（"如图： image 487×438 13.4 KB …"）
   /^如图[：:，,]?\s*(image|$)/i,                        // 「如图」图片说明碎片——收窄到紧跟附件标注或到此为止，
                                                        // 防误杀「如图 3 所示，营收增长 30%」（设计 §5）
+  // ── 11-13：裸文件名开头的附件标注（无 'image ' 前缀形态）──
+  /^IMG_?\d{3,}\b/i,                                      // IMG_0610 1293×1056 127 KB（开头即文件名）
+  /^[0-9a-f]{16,}\b/i,                                    // 77d5d7ae… 哈希文件名开头（Discourse 原图名）
+  /^[A-Za-z0-9_.\- ]{1,64}\.(jpe?g|png|gif|webp|avif)\b/i,  // image.png 类文件名直出（含带空格名）
 ]
 
-/** 垃圾声明判定：过短（<8 字符，不可证伪）或命中任一垃圾模式。 */
+/** 垃圾声明判定：过短（<8 字符，不可证伪）或命中任一垃圾模式。
+ *  11-13 追加：附件文件名开头 + 含宽高对 → 一律垃圾，后跟评论碎片不影响判定
+ *  （'IMG_4628 1290×621 108 KB 不会真的是…'——文件名开头即机械可识别，尾部文字是评论残片）。 */
 export const isJunkClaim = c => {
   const t = (c && typeof c.claim === 'string') ? c.claim.trim() : ''
   if (t.length < 8) return true
   if (JUNK_RES.some(re => re.test(t))) return true
+  if (_DIM.test(t) && /^(IMG_?\d{3,}|[0-9a-f]{16,})\b/i.test(t)) return true
   // URL 转发残片：以链接开头、去掉链接后剩余文字 < 12 字符（如 "https://… The Times"）——
   // 可证伪声明需要文字陈述事实，链接后只剩几个词属转发残片（10-04 实证 #5）
   if (/^https?:\/\/\S+/.test(t) && t.replace(/^https?:\/\/\S+\s*/, '').length < 12) return true

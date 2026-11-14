@@ -178,6 +178,23 @@ export const sourceTier = url => {
     return 'T2'
   } catch { return 'T2' }
 }
+
+// 11-13 质量闸（黄仁勋 case 复盘）：linux.do 帖引用的外链页（found_via=linuxdo-outlink）的
+// sourceQuality 由 fetch 代理自判——模型看着像官方就给 primary，域名真伪无人校验。本次真身是
+// nvidianews（T1，行为不变），但机制上社区帖外链到转载站/自媒体同域仿冒页同样能拿 primary，
+// verify 的「一手源宽松默认」（prompts.mjs verifyPrompt isPrimary 分支）被假 primary 骗过。
+// 规则：outlink 来源升 primary 必须域名命中 TIER1_HOSTS（sourceTier==='T1'），否则封顶
+// secondary。HIGH_VALUE_OUTLINK_RE 白名单里的媒体域（techcrunch/reuters 等）本就该是
+// secondary，此闸不改变其正常语义；纯函数原地改写（与 claim-gate「引用透传」同哲学）。
+export const capOutlinkQuality = bound => {
+  if (!bound || bound.found_via !== 'linuxdo-outlink' || bound.sourceQuality !== 'primary') return { bound, capped: 0 }
+  let capped = 0
+  if (sourceTier(bound.url) !== 'T1') { bound.sourceQuality = 'secondary'; capped++ }
+  for (const c of bound.claims || []) {
+    if (c && c.sourceQuality === 'primary' && sourceTier(c.sourceUrl) !== 'T1') { c.sourceQuality = 'secondary'; capped++ }
+  }
+  return { bound, capped }
+}
 export const STATIC_FALLBACK_SOURCES = [
   { board: 'labs',       url: 'https://www.anthropic.com/news',  title: 'Anthropic 官方 News' },
   { board: 'labs',       url: 'https://openai.com/news/',     title: 'OpenAI News' },

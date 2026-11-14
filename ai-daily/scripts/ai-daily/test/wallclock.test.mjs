@@ -208,10 +208,20 @@ test('P1 接线：safeAgent 三条终局路径全部记账，成功路径清零'
 })
 
 test('P1 接线：跳闸与饥饿写进 degraded + meta，run 后可审计', () => {
-  assert.match(TPL, /degradedFlags\.push\('breaker_open:' \+ BREAKER\.reason\(\)\)/, '跳闸进降级旗标')
+  // 11-13 观测性升级：breaker_open 旗标带跳闸瞬间阶段戳（@stage=X@t=Ns）——区分早期跳闸（拖累全天）
+  // 与尾部跳闸（影响有限）。包装器 BREAKER.record 跳闸瞬间盖 _TRIP_STAMP，degraded/meta 两处消费。
+  assert.match(TPL, /degradedFlags\.push\('breaker_open:' \+ BREAKER\.reason\(\) \+ \(_TRIP_STAMP \|\| ''\)\)/, '跳闸进降级旗标（含阶段戳）')
+  assert.match(TPL, /_TRIP_STAMP = _STAMP\(\)/, '跳闸瞬间盖章（包装器 record 内）')
+  assert.match(TPL, /@stage=' \+ _CURRENT_STAGE/, '阶段戳含当前阶段名')
+  assert.match(TPL, /_CURRENT_STAGE = 'Harvest'/, 'phase() 切换点跟踪：Harvest')
+  assert.match(TPL, /_CURRENT_STAGE = 'Discover'/, 'phase() 切换点跟踪：Discover')
+  assert.match(TPL, /_CURRENT_STAGE = 'Fetch'/, 'phase() 切换点跟踪：Fetch')
+  assert.match(TPL, /_CURRENT_STAGE = 'Verify'/, 'phase() 切换点跟踪：Verify')
+  assert.match(TPL, /_CURRENT_STAGE = 'Synthesize'/, 'phase() 切换点跟踪：Synthesize')
   assert.match(TPL, /degradedFlags\.push\('wallclock_starved:'/, '饥饿倍率显著时进降级旗标')
   assert.match(TPL, /wallclock: \{/, 'meta 带 wallclock 对账块')
-  assert.match(TPL, /breaker: \{ open: BREAKER\.open\(\), reason: BREAKER\.reason\(\)/, 'meta 带 breaker 账')
+  assert.match(TPL, /breaker: \{ open: BREAKER\.open\(\), reason: BREAKER\.reason\(\), tripStamp: _TRIP_STAMP/, 'meta 带 breaker 账（含 tripStamp）')
+  assert.match(TPL, /get stats\(\) \{ return _BREAKER\.stats \}/, '包装器透传 stats（BREAKER-OPEN 日志与 meta 消费）')
 })
 
 test('P1 接线：wallclock_starved 看 peakFactor（先饿后恢复不得抹旗标）', () => {
