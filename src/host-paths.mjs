@@ -61,6 +61,12 @@ export function hostPaths({ platform = process.platform, home = os.homedir(), ex
   const promptDir = path.join(noteDir, "AI", "AI 提示词", "图片生成提示词");
   return {
     grokSearchDir: path.join(home, ".claude", "skills", "grok-search"),
+    // The vault ROOT, not the DallyReport sub-folder. Wikilinks written into the
+    // vault are resolved by the vault's own resolver, which is vault-root
+    // relative (the vault's CLAUDE.md: "所有路径使用相对路径，从 vault 根目录开始").
+    // A generator that only knows obsidianDir cannot emit a resolvable link, so
+    // the root travels alongside it.
+    vaultRoot,
     obsidianDir: path.join(noteDir, "AI", "DallyReport"),
     imagePromptFile: path.join(promptDir, "GitHub 日报海报提示词.md"),
     aiImagePromptFile: path.join(promptDir, "AI 日报海报提示词.md"),
@@ -89,3 +95,45 @@ function vaultCandidates(platform, home) {
 
 // Resolved once for the current host; config.mjs reads these as its defaults.
 export const HOST_DEFAULTS = hostPaths();
+
+// Derive the vault root from an arbitrary output directory.
+//
+// OBSIDIAN_DIR may be overridden in .env (the production value points at
+// `<vault>/Note/AI/DallyReport`), so the root cannot simply be the host
+// default — it must follow the EFFECTIVE output directory.
+//
+// Two markers, in order:
+//   1. `.obsidian/` — Obsidian's own vault marker. Unambiguous, so it wins.
+//   2. the `Note/` segment — the vault's convention (CLAUDE.md: paths are
+//      vault-root relative, and the content tree lives under `Note/`).
+//
+// If neither is found the host default is returned: a wrong-but-stable root
+// degrades to the previous (unresolvable) link form, while a wrong root would
+// emit links that point at a DIFFERENT real file — strictly worse.
+export function vaultRootForDir(obsidianDir, { exists = fs.existsSync } = {}) {
+  if (!obsidianDir) return HOST_DEFAULTS.vaultRoot;
+  let dir = path.resolve(obsidianDir);
+  const parts = path.resolve(obsidianDir).split(path.sep);
+  // Index of the `Note` segment, searched from the deepest end so a nested
+  // folder that happens to be called "Note" cannot win over the real one.
+  let noteIdx = -1;
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    if (parts[i] === "Note") {
+      noteIdx = i;
+      break;
+    }
+  }
+  const noteFallback = noteIdx > 0 ? parts.slice(0, noteIdx).join(path.sep) || path.sep : null;
+
+  for (;;) {
+    try {
+      if (exists(path.join(dir, ".obsidian"))) return dir;
+    } catch {
+      /* unreadable dir: keep walking up */
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return noteFallback || HOST_DEFAULTS.vaultRoot;
+}

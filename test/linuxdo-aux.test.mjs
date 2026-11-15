@@ -43,19 +43,22 @@ test("renderLinuxDoPostAuxiliary: a duplicate url is archived once", () => {
 
 test("renderLinuxDoPostAuxiliary: attachment count and full-thread embed are kept", () => {
   const c = card(9, "2026-10-17T10:00:00.000Z");
+  // The embed is consumed VERBATIM (the aux note never rewrites it), so the
+  // fixture carries the canonical vault-root form the generator now emits.
+  const embed = "![[Note/AI/DallyReport/2026-10-18/linuxdo-posts/9-post.md]]";
   const byUrl = new Map([
-    [c.url, { title: "帖子 9", attachments: [{}, {}, {}], embed: "![[2026-10-18/linuxdo-posts/9-post]]" }],
+    [c.url, { title: "帖子 9", attachments: [{}, {}, {}], embed }],
   ]);
   const out = renderLinuxDoPostAuxiliary([c], "2026-10-18", byUrl);
   assert.match(out, /^- 附件：3 个已下载$/m);
   assert.match(out, /<details><summary>展开完整帖子（帖子 9）<\/summary>/);
-  assert.match(out, /!\[\[2026-10-18\/linuxdo-posts\/9-post\]\]/);
+  assert.match(out, /!\[\[Note\/AI\/DallyReport\/2026-10-18\/linuxdo-posts\/9-post\.md\]\]/);
 });
 
 test("renderLinuxDoPostAuxiliary: a newline in the enriched title does not split the summary", () => {
   const c = card(9, "2026-10-17T10:00:00.000Z");
   const byUrl = new Map([
-    [c.url, { title: "上半句\n下半句", attachments: [], embed: "![[2026-10-18/linuxdo-posts/9-post]]" }],
+    [c.url, { title: "上半句\n下半句", attachments: [], embed: "![[Note/AI/DallyReport/2026-10-18/linuxdo-posts/9-post.md]]" }],
   ]);
   const out = renderLinuxDoPostAuxiliary([c], "2026-10-18", byUrl);
   assert.match(out, /^<details><summary>展开完整帖子（上半句 下半句）<\/summary>$/m);

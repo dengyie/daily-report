@@ -3,7 +3,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolveMode, windowRange } from "./report-window.mjs";
-import { HOST_DEFAULTS } from "./host-paths.mjs";
+import { HOST_DEFAULTS, vaultRootForDir } from "./host-paths.mjs";
 
 // project dir regardless of cwd (running from elsewhere wouldn't re-hit the net or
 // split caches across directories).
@@ -215,9 +215,14 @@ export function loadConfig({ date = null, mode = null } = {}) {
   const reportMode = resolveMode(date || beijingDateFor(Date.now()), modeOverride);
   const window = windowRange(date || beijingDateFor(Date.now()), reportMode);
   const weekly = reportMode === "weekly";
+  // The effective output dir decides the vault root: OBSIDIAN_DIR may point
+  // anywhere, and the vault-root-relative wikilinks the generator writes must
+  // be relative to the ACTUAL vault, not the host default.
+  const obsidianDir = val("OBSIDIAN_DIR") || DEFAULT_OBSIDIAN_DIR;
   const config = {
     grokSearchDir: val("GROK_SEARCH_DIR") || DEFAULT_GROK_SEARCH_DIR,
-    obsidianDir: val("OBSIDIAN_DIR") || DEFAULT_OBSIDIAN_DIR,
+    obsidianDir,
+    vaultRoot: vaultRootForDir(obsidianDir),
     // --- material window (see report-window.mjs) ---
     // Every collector and every recency gate reads these two numbers. Nothing
     // downstream recomputes a date, so a weekly is exactly a wider window rather

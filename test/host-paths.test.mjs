@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { hostPaths, HOST_DEFAULTS } from "../src/host-paths.mjs";
+import { hostPaths, HOST_DEFAULTS, vaultRootForDir } from "../src/host-paths.mjs";
 
 // The three platform branches are exercised explicitly with a fixed home, so the
 // suite covers darwin/win32/linux regardless of the host it runs on. A test that
@@ -89,4 +89,33 @@ test("hostPaths(darwin): relies on probing when the iCloud nest does not exist",
     path.join(plainRoot, "Note", "AI", "DallyReport"),
     "must resolve inside the existing plain vault, not the missing iCloud nest",
   );
+});
+
+// ── vaultRootForDir ────────────────────────────────────────────────────────
+// The vault root must follow the EFFECTIVE output directory (OBSIDIAN_DIR may
+// be overridden in .env), because every wikilink the generator writes is
+// resolved by the vault from its root.
+
+test("vaultRootForDir: finds the root via the .obsidian marker", () => {
+  // Absolute, platform-correct paths: the function resolves its input, so a
+  // relative fixture would be resolved against the cwd and the expectation
+  // would differ from the input.
+  const root = path.resolve(path.sep, "vault", "note");
+  const dir = path.join(root, "Note", "AI", "DallyReport");
+  const got = vaultRootForDir(dir, {
+    exists: (p) => p === path.join(root, ".obsidian"),
+  });
+  assert.equal(got, root);
+});
+
+test("vaultRootForDir: falls back to the Note/ segment when .obsidian is absent", () => {
+  const root = path.resolve(path.sep, "vault", "note");
+  const dir = path.join(root, "Note", "AI", "DallyReport");
+  const got = vaultRootForDir(dir, { exists: () => false });
+  assert.equal(got, root);
+});
+
+test("vaultRootForDir: an empty dir falls back to the host default", () => {
+  assert.equal(vaultRootForDir(""), HOST_DEFAULTS.vaultRoot);
+  assert.equal(vaultRootForDir(null), HOST_DEFAULTS.vaultRoot);
 });

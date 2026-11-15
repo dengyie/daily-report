@@ -1344,7 +1344,14 @@ export async function enrichLinuxdoPosts(cards, config, deps = {}) {
       title,
       created_at: card?.created_at || topic?.created_at || null,
       postFile: vaultRel(dateDir, postFile),
-      embed: `![[${config.date}/linuxdo-posts/${fileName}]]`,
+      // Vault-root relative, because the vault's own resolver resolves wikilinks
+      // from the vault root only — a date-relative link resolves to nothing.
+      // `config.vaultRoot` is optional (a hand-built config may omit it): fall
+      // back to the date dir, i.e. the legacy relative form, rather than
+      // throwing inside the enrich loop (which would silently drop the post).
+      embed: `![[${config.vaultRoot
+        ? vaultRel(config.vaultRoot, postFile)
+        : vaultRel(dateDir, postFile)}]]`,
       attachments: uploaded,
     };
   }, deadline);

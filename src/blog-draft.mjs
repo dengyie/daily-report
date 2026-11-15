@@ -33,6 +33,14 @@ function cleanObsidianMarkdown(body, { imagePath = "assets/AI.png" } = {}) {
   let result = body;
   // Obsidian embeds are deliberately converted only for the known local poster.
   // Other embeds become a visible text marker instead of silently disappearing.
+  //
+  // The poster embed is matched by BASENAME, so it is recognised in both the
+  // short form ([[AI.png]]) and the vault-root form
+  // ([[Note/AI/DallyReport/<date>/AI.png]]) the generator now writes. Matching
+  // only the short form silently demoted the poster to "附件：…" — a broken
+  // public draft with no cover image (the 27 already-shipped full-path embeds
+  // hit exactly this).
+  result = result.replace(/!\[\[[^[\]]*\/AI\.png\]\]/g, `![AI 日报海报](${imagePath})`);
   result = result.replace(/!\[\[AI\.png\]\]/g, `![AI 日报海报](${imagePath})`);
   result = result.replace(/!\[\[([^\]]+)\]\]/g, "![附件：$1](attachments/$1)");
   // Internal Obsidian links are not meaningful on the public blog. Keep the label.

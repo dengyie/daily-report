@@ -221,7 +221,14 @@ async function run() {
         [ai, alt.name],
         [alt, ai.name],
       ]) {
-        v.markdown = injectCrossRef(v.markdown, otherName);
+        // Vault-root relative: the sibling note lives at
+        // <vaultRoot>/Note/AI/DallyReport/<date>/<otherName>.md, and that full
+        // path is the only form the vault's resolver can resolve unambiguously.
+        const otherTarget = vaultRel(
+          config.vaultRoot,
+          path.join(config.obsidianDir, config.date, `${otherName}.md`),
+        );
+        v.markdown = injectCrossRef(v.markdown, otherTarget);
         const rewrote = await writeSection(config, v.name, v.markdown);
         if (rewrote.error) {
           // The pre-link version is already on disk; don't pretend otherwise.
@@ -262,8 +269,15 @@ async function run() {
           // same-folder, so it survives vault moves). Rebuild markdown + rewrite.
           // Must be the SAME name the poster was written under — a weekly writes
           // GitHub-周报.png, and embedding [[GitHub.png]] would silently point at
-          // the daily's poster instead.
-          const embedded = embedPosterInMarkdown(gv.markdown, githubPosterFileName(config));
+          // the daily's poster instead. The link target is vault-root relative:
+          // a bare [[GitHub.png]] is ambiguous across the dated folders.
+          const embedded = embedPosterInMarkdown(
+            gv.markdown,
+            vaultRel(
+              config.vaultRoot,
+              path.join(config.obsidianDir, config.date, githubPosterFileName(config)),
+            ),
+          );
           const written2 = await writeSection(config, gv.name, embedded);
           if (written2.error) {
             // Text report is already on disk from the first write; embedding just
@@ -320,7 +334,15 @@ async function run() {
                 },
               });
         if (poster.ok && poster.file) {
-          const embedded = embedPosterInMarkdown(av.markdown, aiPosterFileName(config));
+          // Vault-root relative: a bare [[AI.png]] is ambiguous across the
+          // dated folders (the vault has one per report day).
+          const embedded = embedPosterInMarkdown(
+            av.markdown,
+            vaultRel(
+              config.vaultRoot,
+              path.join(config.obsidianDir, config.date, aiPosterFileName(config)),
+            ),
+          );
           const written2 = await writeSection(config, av.name, embedded);
           if (written2.error) {
             poster.embedError = written2.error;
@@ -434,8 +456,20 @@ async function run() {
   process.stdout.write(text, (err) => process.exit(err ? 1 : 0));
 }
 
+// Vault markdown links are URL-like and always use `/`, including on Windows
+// where path.relative emits `\`. A backslash makes the link unresolvable in
+// Obsidian (and in the vault's own resolver, which treats `\` as unsupported).
+function vaultRel(from, to) {
+  return path.relative(from, to).split(path.sep).join("/");
+}
+
 // Insert a cross-reference line under the H1 so the dual AI channels point at
-// each other (AI.md <-> AI-Gemini.md). Obsidian wikilink, same folder.
+// each other (AI.md <-> AI-Gemini.md). Obsidian wikilink.
+//
+// The link target is vault-root relative, like every other link this generator
+// writes: the vault's own resolver only resolves from the vault root, and a
+// bare `[[AI-DeepSeek]]` is AMBIGUOUS once more than one dated folder holds an
+// `AI-DeepSeek.md` (measured: 10 ambiguous links across the vault).
 function injectCrossRef(markdown, otherFile) {
   const line = `> 🔀 另一模型视角：[[${otherFile}]]`;
   const lines = String(markdown).split("\n");

@@ -71,9 +71,13 @@ function makeTopicJson(title, cookedArr) {
 
 test("enrichLinuxdoPosts: writes full post md + downloads attachments into vault folders", async () => {
   const tmp = tmpDirSync("dally-posts-");
+  // The vault root is the PARENT of the output dir: the embed is vault-root
+  // relative, which is the only form the vault's resolver can resolve.
+  const vaultRoot = path.dirname(tmp);
   const config = {
     date: "2026-08-07",
     obsidianDir: tmp,
+    vaultRoot,
     linuxdoFullPosts: true,
     linuxdoDownloadAttachments: true,
     linuxdoFullPostsLimit: 40,
@@ -105,8 +109,10 @@ test("enrichLinuxdoPosts: writes full post md + downloads attachments into vault
   // one level deeper in linuxdo-posts/, so it needs the ../ prefix to resolve
   // its sibling linuxdo-attachments/ dir).
   assert.match(md, /\.\.\/linuxdo-attachments\/10\//);
-  // Embed is a vault-root embed line for Obsidian.
-  assert.match(rec.embed, /^!\[\[2026-08-07\/linuxdo-posts\/10-.*\.md\]\]$/);
+  // Embed is a VAULT-ROOT relative embed line for Obsidian: the vault's own
+  // resolver only resolves from the vault root, and a date-relative link
+  // (`![[2026-08-07/linuxdo-posts/...]]`) resolves to nothing.
+  assert.match(rec.embed, /^!\[\[.*\/2026-08-07\/linuxdo-posts\/10-.*\.md\]\]$/);
   rmSync(tmp, { recursive: true, force: true });
 });
 
