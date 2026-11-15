@@ -394,10 +394,12 @@ test('模板：withDeadline reject 透传错误，不得抹成 null', () => {
   assert.match(probeSeg, /catch/, 'probeGateway reject → 视同探针失败，不得炸 workflow')
 })
 
-test('模板：verify 主批次票共享阶段阶梯 t0，不得每票独立 now()；补投轮是唯一独立 t0 例外（10-04 复审）', () => {
+test('模板：verify 主批次票共享阶段阶梯 t0，不得每票独立 now()；补投轮与 ext 抽查是仅有的独立 t0 例外（10-04 复审 / 11-15 review P2-①）', () => {
   // P2-2：_voteBatch 若把满额 LADDER_BUDGET_MS 配每票自己的 t0，后批/补票会重新吃满 15min。
-  // 主批次/救护批共享 verifyLadderT0（默认第 5 参回落）；VERIFY-RETRY 补投轮是**唯一**独立 t0 例外
-  // （10-04 复审 Suggestion-1：风暴耗尽共享预算后补投无换级能力 → 独立 t0，整轮一个、非每票一个）。
+  // 主批次/救护批共享 verifyLadderT0（默认第 5 参回落）；VERIFY-RETRY 补投轮独立 t0
+  // （10-04 复审 Suggestion-1：风暴耗尽共享预算后补投无换级能力 → 独立 t0，整轮一个、非每票一个）；
+  // 11-15 review P2-①：ext 外部抽查票同样独立 t0（extLadderT0）——ext 时序在主票+补投全部跑完之后，
+  // 共享 t0 预算已耗尽，风暴下 ext 票无换级能力 → 整批 agentError（external_check 全 unavailable）。
   assert.match(TPL, /const verifyLadderT0 = now\(\)/, 'Verify 阶段钉一次 t0')
   assert.ok(TPL.indexOf('const verifyLadderT0 = now()') > TPL.indexOf("phase('Verify')"), 't0 在 phase Verify 之后')
   assert.ok(TPL.indexOf('const verifyLadderT0 = now()') < TPL.indexOf('const _voteBatch'), 't0 在 _voteBatch 之前，救护批也共享')
@@ -407,6 +409,11 @@ test('模板：verify 主批次票共享阶段阶梯 t0，不得每票独立 now
   assert.match(retrySeg, /const verifyRetryLadderT0 = now\(\)/, '补投轮整轮钉一次独立 t0')
   assert.match(retrySeg, /voteClaim\(c, AGENT_TIMEOUT_MS, verifyRetryLadderT0\)/, '补投票传入独立 t0')
   assert.ok(retrySeg.indexOf('const verifyRetryLadderT0 = now()') === retrySeg.lastIndexOf('const verifyRetryLadderT0 = now()'), '整轮一次，不是每票一个 now()')
+  // 11-15 P2-①：ext 抽查段整批一个独立 t0，且不再引用共享 verifyLadderT0
+  const extSeg = TPL.slice(TPL.indexOf('9/19 F1 外部抽查票'), TPL.indexOf('const confirmedVerify ='))
+  assert.match(extSeg, /const extLadderT0 = extTargets\.length \? now\(\) : null/, 'ext 段整批钉一次独立 t0（无目标不取时点）')
+  assert.match(extSeg, /MODEL_LADDER, LADDER_BUDGET_MS, extLadderT0\)/, 'ext 票传入独立 t0')
+  assert.ok(extSeg.indexOf('verifyLadderT0') === -1, 'ext 段不得再引用共享 verifyLadderT0')
 })
 
 test('模板：超时日志不再写 report 有内容至多 2 试', () => {

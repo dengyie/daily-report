@@ -754,17 +754,23 @@ test("image-gen: injected fs supports Windows target replacement", async () => {
   assert.deepEqual((await fs.readdir(outDir)).filter((name) => /\.(tmp|bak)$/.test(name)), []);
 });
 
-test("image-gen: missing creds -> MISSING_IMAGE_CREDS", async (t) => {
-  if (process.env.GROK_API_URL && process.env.GROK_API_KEY) {
-    t.skip("creds present in env; skipping the missing-creds case");
-    return;
+test("image-gen: missing creds -> MISSING_IMAGE_CREDS", async () => {
+  // 11-15 review P3-⑤ 根修：env 沙箱（try/finally 摘除/恢复两键）替代「缺 creds 才跑」的 skip——
+  // 生产机 creds 在场时该负路径从未被验证。同 dally.test.mjs missing-creds 用例口径。
+  const saved = { url: process.env.GROK_API_URL, key: process.env.GROK_API_KEY };
+  delete process.env.GROK_API_URL;
+  delete process.env.GROK_API_KEY;
+  try {
+    const c = cfg();
+    // Pass a real row: the IMG_NO_ROWS gate runs before the cred check, so an
+    // empty repo list would never reach the missing-creds path.
+    const res = await generateGithubPoster(c, [{ repo: "a/b", starsToday: 5, starsTotal: 10 }], { fetch: () => {}, sips: false });
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, "MISSING_IMAGE_CREDS");
+  } finally {
+    if (saved.url !== undefined) process.env.GROK_API_URL = saved.url;
+    if (saved.key !== undefined) process.env.GROK_API_KEY = saved.key;
   }
-  const c = cfg();
-  // Pass a real row: the IMG_NO_ROWS gate runs before the cred check, so an
-  // empty repo list would never reach the missing-creds path.
-  const res = await generateGithubPoster(c, [{ repo: "a/b", starsToday: 5, starsTotal: 10 }], { fetch: () => {}, sips: false });
-  assert.equal(res.ok, false);
-  assert.equal(res.error.code, "MISSING_IMAGE_CREDS");
 });
 
 test("buildAiContextualPrompt: injects real per-item summaries + anti-placeholder rule", () => {

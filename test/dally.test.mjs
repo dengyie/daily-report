@@ -379,22 +379,28 @@ test("synthesize: no sources -> NO_SOURCES", async () => {
   );
 });
 
-test("synthesize: missing creds -> MISSING_GROK_CREDS", async (t) => {
-  // Only meaningful when creds are actually absent in the env.
-  if (process.env.GROK_API_URL && process.env.GROK_API_KEY) {
-    t.skip("creds present in env; skipping the missing-creds case");
-    return;
+test("synthesize: missing creds -> MISSING_GROK_CREDS", async () => {
+  // 11-15 review P3-⑤ 根修：不再依赖「环境恰好缺 creds」才可跑（生产机恒 skip = 负路径从未
+  // 被真实验证）。val() 直读 process.env → try/finally 临时摘除两键做 env 沙箱，任何环境都可跑，
+  // finally 保证即使断言失败也恢复环境（不污染同进程后续测试）。
+  const saved = { url: process.env.GROK_API_URL, key: process.env.GROK_API_KEY };
+  delete process.env.GROK_API_URL;
+  delete process.env.GROK_API_KEY;
+  try {
+    await assert.rejects(
+      () =>
+        synthesizeFromSources({
+          query: "q",
+          date: "2026-07-31",
+          sources: [{ url: "u" }],
+          fetch: () => {
+            throw new Error("should not be called");
+          },
+        }),
+      (err) => err.code === "MISSING_GROK_CREDS",
+    );
+  } finally {
+    if (saved.url !== undefined) process.env.GROK_API_URL = saved.url;
+    if (saved.key !== undefined) process.env.GROK_API_KEY = saved.key;
   }
-  await assert.rejects(
-    () =>
-      synthesizeFromSources({
-        query: "q",
-        date: "2026-07-31",
-        sources: [{ url: "u" }],
-        fetch: () => {
-          throw new Error("should not be called");
-        },
-      }),
-    (err) => err.code === "MISSING_GROK_CREDS",
-  );
 });

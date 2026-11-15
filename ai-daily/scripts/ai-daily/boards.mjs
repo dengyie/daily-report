@@ -56,7 +56,12 @@ export const OFFICIAL_FEEDS = [
 // Astra 为媒体口径预告 + 已超 21d 门禁，2026-09-01 退役。
 // 命名约束（P5 实测锁定）：DeepSeek 系新名必须用连字符（DeepSeek-V4-Flash-Vision-Exp）——
 // 空格形式会命中既有 deepseek-v4 指纹 key 被 makeAddMajor 静默去重（dedup.mjs majorKey 实测 09-01）。
+// 11-15 review P3-④ 种子刷新：08 月批 4 条已全超 21d 门禁退役（保底网空转 3 天），补 3 条
+// 官方一手页可溯源的近期条目（11-04/11-12 已落地 + 11-17 前瞻事件；host grok-search CLI 实核 url）。
 export const KNOWN_MAJOR_OUT = [
+  { name: 'Gemini 4 Hydrogen 全量开放（Gemini 4 家族快速档）', date: '2026-11-12', note: 'Google 官方博客 2026/11/12 发布 Gemini 4 Hydrogen（Koray Kavukcuoglu 署名，11-13 更新）：Gemini 4 家族快速档，面向日常编码与 agentic 工作流，全量开放至 Gemini API/AI Studio/Gemini App/Google Search，1M 上下文全档统一价。（官方一手页溯源）', url: 'https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-hydrogen/' },
+  { name: 'Moonshot Kimi K3.1 Pro 开放完整权重', date: '2026-11-04', note: 'Moonshot 官方 2026/11/04 宣布 K3.1 Pro 完整权重开放于 Hugging Face（moonshotai/Kimi-K3.1-Pro）：约 2.8T 总参 / ~104B 激活 MoE、~1M 上下文、MXFP4 QAT 权重约 1.56TB 无门槛下载；11-11 起 kimi-k3.1-pro-highspeed 上 Amazon Bedrock。（官方一手页溯源）', url: 'https://huggingface.co/moonshotai/Kimi-K3.1-Pro' },
+  { name: 'Microsoft Ignite 2026（前瞻）', date: '2026-11-17', note: '微软年度大会 Ignite 2026 将于 2026/11/17-20 在旧金山 Moscone Center 举行（线上 11-17~19，数字通行证免费），开幕主题演讲 11-17 由 Satya Nadella 主讲；AI/agent 产品发布动向待大会实证，属前瞻种子。（官方一手页溯源）', url: 'https://ignite.microsoft.com/en-US/home' },
   { name: 'DeepSeek V4-Pro 正式版上线（Agent 能力增强）', date: '2026-08-13', note: 'DeepSeek 官方 news 页登记 DeepSeek-V4-Pro 正式版上线 2026/08/13，App/网页/API 全面开放，强化 Agent 能力并引入分时段峰值定价；网易 08-16 报道印证 2026-08-17 价格生效（双源）。', url: 'https://api-docs.deepseek.com/news/' },
   { name: 'DeepSeek-V4-Flash-Vision-Exp 多模态实验模型上线', date: '2026-08-21', note: 'DeepSeek 官方 news 页 2026/08/21 登记 V4-Flash-Vision-Exp 多模态实验模型：文本侧对齐 V4-Flash（Agent/推理/代码），多模态 Agent 基准较主流模型跃升、逼近前沿旗舰；图片 token 化 ≤384 且按 V4-Flash 定价计费；同日 API 支持 Chat/Messages/Responses，Files API 与 DeepSeek Harness 0.1.1 同步支持。（官方一手页溯源）', url: 'https://api-docs.deepseek.com/news/news260821' },
   { name: 'Anthropic 发布 Model Hardware Standard 研究预览（Agent 操纵物理设备）', date: '2026-08-27', note: 'Anthropic 官方 news 页 2026/08/27 发布 Model Hardware Standard 研究预览：为 Agent 安全并行操作显微仪器/液态处理器/机械臂定义共享规范；Anthropic 与 HHMI Janelia 合作、集成耗时从周/月压缩到小时级，研究发布。（官方一手页溯源）', url: 'https://www.anthropic.com/news/model-hardware-standard-research-preview' },

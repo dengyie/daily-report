@@ -1008,11 +1008,17 @@ const externalStats = { targets: 0, corroborated: 0, refuted: 0, unavailable: 0,
       (isExtraordinaryClaim(c) && c.sourceQuality !== 'primary')))
   externalStats.targets = extTargets.length
   if (extTargets.length) log('EXTERNAL-CHECK 存活 claim 外部抽查 ' + extTargets.length + ' 条（forum/blog 全量 + 二手源非常规声明；独立佐证票 ×1，主路 grok-search CLI）')
+  // 11-15 review P2-①：ext 票用**整批一个独立 t0**（extLadderT0 = now()），不共享 verifyLadderT0——
+  // ext 阶段时序在 Verify 主票 + VERIFY-RETRY 补投全部跑完之后，共享 t0 的阶梯预算大概率已耗尽，
+  // MODEL_LADDER 退化为只认首档；一旦网关风暴，ext 票无换级能力 → 整批 agentError（external_check
+  // 全 unavailable）。语义与 VERIFY-RETRY 的 verifyRetryLadderT0 同款（10-04 复审 Suggestion-1）：
+  // 风暴尾巴上仍有完整降级链，额外墙钟 ≤LADDER_BUDGET_MS 有界。整轮一个、非每票一个。
+  const extLadderT0 = extTargets.length ? now() : null
   for (const batch of chunkArr(extTargets, VERIFY_BATCH)) {
     // 9/19 review P3：批间预算闸（纯读不记账）——Verify 死线耗尽不再放行新外部票批，余票走下方兜底 unavailable。
     if (budgetGate.roomTo('Verify') === 0) { log('BUDGET-BREAK External-check 余批跳过（Verify 死线已耗尽，roomTo=0 纯读停止）'); break }
     const res = await parallel(batch.map(c => () =>
-      safeAgentWithLadder(externalVerifyPrompt(c, ctxP), { label: 'ext:' + (c.claim || '').slice(0, 30), phase: 'Verify', schema: VERDICT_SCHEMA, effort: 'low', timeoutMs: AGENT_TIMEOUT_MS }, MODEL_LADDER, LADDER_BUDGET_MS, verifyLadderT0)
+      safeAgentWithLadder(externalVerifyPrompt(c, ctxP), { label: 'ext:' + (c.claim || '').slice(0, 30), phase: 'Verify', schema: VERDICT_SCHEMA, effort: 'low', timeoutMs: AGENT_TIMEOUT_MS }, MODEL_LADDER, LADDER_BUDGET_MS, extLadderT0)
     ))
     res.forEach((r, i) => {
       const c = batch[i]
