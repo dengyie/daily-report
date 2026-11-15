@@ -539,7 +539,7 @@ test('模板：fetch 吞错补 log（F10）——映射异常与代理真实失�
 
 test('模板：外部票三态走 externalCheckState 纯函数（toolsUnavailable 不再落 corroborated）', () => {
   assert.match(TPL, /const state = externalCheckState\(r\)/, '三态判定经 schemas.mjs 纯函数')
-  assert.match(TPL, /if \(state === 'unavailable'\) \{ c\.externalCheck = 'unavailable'/, 'unavailable 分支（含模型自报工具不可用）')
+  assert.match(TPL, /if \(state === 'unavailable'\) \{\n\s+c\.externalCheck = 'unavailable'/, 'unavailable 分支（含模型自报工具不可用）')
   assert.match(TPL, /if \(state === 'refuted'\)/, 'refuted 分支')
   assert.ok(!/if \(!r\) \{ c\.externalCheck = 'unavailable'/.test(TPL), '旧的「仅代理失败=unavailable」二分已移除（P2-2 根因）')
 })

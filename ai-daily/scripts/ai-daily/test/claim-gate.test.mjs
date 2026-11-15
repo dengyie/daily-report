@@ -130,7 +130,7 @@ test('isExtraordinaryClaim：人事变动/并购/解散关闭/诉讼处罚 四�
     '英特尔宣布关闭其车载 AI 部门',                        // 关闭
     'Meta 遭美国司法部反垄断起诉',                        // 诉讼
     'OpenAI 解散其 AGI Readiness 团队',                   // 解散
-    '孙鹏加入字节跳动出任产品负责人',                      // 11-13 账本实证条目（离职/加入族）
+    '孙鹏加入字节跳动出任产品负责人，原公司人事变动',      // 11-13 账本实证条目（人事族命中）
     '某公司因数据违规被立案调查',                          // 强组合「立案调查」（11-14 review P2-②）
   ]
   for (const t of HIT) assert.equal(isExtraordinaryClaim({ claim: t }), true, JSON.stringify(t))

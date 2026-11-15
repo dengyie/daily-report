@@ -2230,7 +2230,7 @@ const splitSeeds = (seeds, ledger) => {
 const ledgerPriorFor = (claim, ledger, today, lookbackDays = LEDGER_LOOKBACK_DAYS) => {
   if (!claim) return null
   const entries = Array.isArray(ledger) ? ledger : []
-  const recent = entries.filter(e => _withinLookback(e && e.day, today, lookback))
+  const recent = entries.filter(e => _withinLookback(e && e.day, today, lookbackDays))
   if (!recent.length) return null
   const like = { url: claim.sourceUrl || claim.url || '', tokens: fingerprintTokens([claim.claim, claim.quote].filter(Boolean).join(' ')) }
   return recent.find(e => storyMatch(like, e)) || null
