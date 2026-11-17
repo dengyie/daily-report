@@ -57,7 +57,10 @@ WALL_START="$(date '+%s')"
 # finalize 用宿主时钟实测回写 meta.wallclock.real_s。realm 看不到探针/模型换档段，手工跑无此
 # env 则 fail-open 不回填。
 export AI_DAILY_RUN_START_EPOCH="$WALL_START"
-WALL_SOFT_LIMIT_S=1800
+# 11-18 墙钟软目标诚实化：直连路由后自然日实测 43-92m（11-11~11-17 七日中位 ~67m），
+# 30m 软目标天天 OVER by 38-63m 等于没有告警。改 90m=中位 +25m 余量——告警回到有意义区间，
+# 真异常（>90m，如网关风暴慢死）才 OVER。workflow 内部各阶段预算闸不受此值影响（仅宿主看门狗）。
+WALL_SOFT_LIMIT_S=5400
 # 9/13 P0-1 / 编排器阶梯：每档探针几次；DeepSeek 连打几次再换级；快死阈值 600s。
 PROBE_RETRY=3
 PROBE_WAIT_S=30
@@ -345,10 +348,10 @@ fi
     notify "日报未生成 $TODAY" "claude rc=$RC，编排器阶梯耗尽仍失败 slow_death=$SLOW_DEATH"
   fi
 
-  # 8/31 P1-② 宿主侧墙钟看门狗：30min 软目标超时可见、可事后审计（不杀进程）。
+  # 8/31 P1-② 宿主侧墙钟看门狗：软目标超时可见、可事后审计（不杀进程）。11-18 起软目标 90m（诚实化）。
   WALL_END="$(date '+%s')"
   WALL_S=$(( WALL_END - WALL_START ))
-  printf 'WALLCLOCK real=%dm%02ds soft_target=30m' "$(( WALL_S / 60 ))" "$(( WALL_S % 60 ))"
+  printf 'WALLCLOCK real=%dm%02ds soft_target=90m' "$(( WALL_S / 60 ))" "$(( WALL_S % 60 ))"
   if [ "$WALL_S" -gt "$WALL_SOFT_LIMIT_S" ]; then
     printf ' → OVER by %dm（meta.wallclock.real_s=宿主实测总墙钟；raw/calibrated 仅 workflow 内段）\n' "$(( (WALL_S - WALL_SOFT_LIMIT_S) / 60 ))"
   else

@@ -53,7 +53,9 @@ WALL_START="$(date '+%s')"
 # finalize 用宿主时钟实测回写 meta.wallclock.real_s。realm 看不到探针/模型换档段，手工跑无此
 # env 则 fail-open 不回填。
 export AI_DAILY_RUN_START_EPOCH="$WALL_START"
-WALL_SOFT_LIMIT_S=1800
+# 11-18 墙钟软目标诚实化（与 run-daily-win.sh 同步）：Mac 已清流、本文件保留语义参考；
+# Windows 生产 30m→90m（直连路由后自然日实测 43-92m，30m 天天 OVER 等于没有告警）。
+WALL_SOFT_LIMIT_S=5400
 # 9/13 P0-1 / 编排器阶梯：每档探针几次；DeepSeek 连打几次再换级；快死阈值 600s。
 PROBE_RETRY=3
 PROBE_WAIT_S=30
@@ -244,7 +246,7 @@ fi
   #   epoch 记账，至少让超时**可见**、可被事后审计（不杀进程，避免半成品覆盖已有产物）。
   WALL_END="$(date '+%s')"
   WALL_S=$(( WALL_END - WALL_START ))
-  printf 'WALLCLOCK real=%dm%02ds soft_target=30m' "$(( WALL_S / 60 ))" "$(( WALL_S % 60 ))"
+  printf 'WALLCLOCK real=%dm%02ds soft_target=90m' "$(( WALL_S / 60 ))" "$(( WALL_S % 60 ))"
   if [ "$WALL_S" -gt "$WALL_SOFT_LIMIT_S" ]; then
     printf ' → OVER by %dm（meta.wallclock.real_s=宿主实测总墙钟；raw/calibrated 仅 workflow 内段）\n' "$(( (WALL_S - WALL_SOFT_LIMIT_S) / 60 ))"
   else
