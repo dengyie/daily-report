@@ -22,10 +22,17 @@ const MAX_SEED_AGE_DAYS = 21
 
 test('P5：每条种子必须带官方一手页 url，且 host 全是官方域（纯媒体口径不收录）', () => {
   assert.ok(KNOWN_MAJOR_OUT.length >= 4, '种子数不得退回 （' + KNOWN_MAJOR_OUT.length + ' 条过低）')
+  // 官方一手域白名单（11-15 种子刷新批新增：blog.google / huggingface.co / ignite.microsoft.com）。
+  // 新种子若来自新厂商官方域，先在此登记再入 KNOWN_MAJOR_OUT——纯媒体域（the-ai.news 等）永不收录。
+  const OFFICIAL_HOSTS = [
+    'api-docs.deepseek.com', 'www.anthropic.com', 'openai.com', 'x.ai',
+    'blog.google', 'huggingface.co', 'ignite.microsoft.com',
+  ]
   for (const s of KNOWN_MAJOR_OUT) {
     assert.ok(s.url && /^https:\/\//.test(s.url), s.name + ' 缺官方 url')
-    assert.match(s.url, /^https:\/\/(api-docs\.deepseek\.com|www\.anthropic\.com|openai\.com|x\.ai)\//,
-      s.name + ' url 必须指向官方一手域（实得 ' + s.url + '）')
+    const host = s.url.replace(/^https:\/\//, '').split('/')[0]
+    assert.ok(OFFICIAL_HOSTS.includes(host),
+      s.name + ' url 必须指向官方一手域（实得 ' + s.url + '；新官方域请先登记 OFFICIAL_HOSTS）')
   }
 })
 

@@ -409,11 +409,14 @@ test('模板：verify 主批次票共享阶段阶梯 t0，不得每票独立 now
   assert.match(retrySeg, /const verifyRetryLadderT0 = now\(\)/, '补投轮整轮钉一次独立 t0')
   assert.match(retrySeg, /voteClaim\(c, AGENT_TIMEOUT_MS, verifyRetryLadderT0\)/, '补投票传入独立 t0')
   assert.ok(retrySeg.indexOf('const verifyRetryLadderT0 = now()') === retrySeg.lastIndexOf('const verifyRetryLadderT0 = now()'), '整轮一次，不是每票一个 now()')
-  // 11-15 P2-①：ext 抽查段整批一个独立 t0，且不再引用共享 verifyLadderT0
+  // 11-15 P2-①：ext 抽查段整批一个独立 t0，且不再引用共享 verifyLadderT0（注释里的提及除外）
   const extSeg = TPL.slice(TPL.indexOf('9/19 F1 外部抽查票'), TPL.indexOf('const confirmedVerify ='))
   assert.match(extSeg, /const extLadderT0 = extTargets\.length \? now\(\) : null/, 'ext 段整批钉一次独立 t0（无目标不取时点）')
   assert.match(extSeg, /MODEL_LADDER, LADDER_BUDGET_MS, extLadderT0\)/, 'ext 票传入独立 t0')
-  assert.ok(extSeg.indexOf('verifyLadderT0') === -1, 'ext 段不得再引用共享 verifyLadderT0')
+  // 代码引用检查：剥掉注释行后再断言——ext 段的说明注释本身会提到 verifyLadderT0（语义说明），
+  // 真正要禁的是**代码**再拿共享 t0 当回落实参（11-16 发现：原断言扫全文被自家注释误触发）。
+  const extCode = extSeg.split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n')
+  assert.ok(extCode.indexOf('verifyLadderT0') === -1, 'ext 段代码不得再引用共享 verifyLadderT0')
 })
 
 test('模板：超时日志不再写 report 有内容至多 2 试', () => {

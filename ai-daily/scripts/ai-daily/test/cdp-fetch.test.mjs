@@ -281,3 +281,79 @@ test('LOCK_TIMEOUT_MS 盖住关标签 3s + 调度余量（9/19 C2：旧值 30s <
   assert.ok(LOCK_TIMEOUT_MS >= CDP_DEFAULTS.requestTimeoutMs + CDP_DEFAULTS.pollMaxMs + 5000,
     `锁等待 ${LOCK_TIMEOUT_MS}ms 应 ≥ open+poll+5s`)
 })
+
+// ─── 11-16 挑战页轮询契约（晨跑 36kr 案例根修：WAF/安全检测页不得被当正文提前收下）───
+// 背景：11-16 08:45 晨跑 fetch:36kr 连续两次把「火山引擎正在进行安全检测...」58 字符挑战页
+// 当 ok:true 正文收下。根修 = readBodyTextRaw WS 轮询循环识别挑战页形态 → 不提前 break，
+// 继续轮询等真实正文；轮询到上限（isLast）仍只有挑战页才收下（下游 empty_body/回落语义不变）。
+
+test('cdpFetch：挑战页先到 → 继续轮询等真实正文（不把 WAF 拦截页当 ok:true 收下）', async () => {
+  // bodyText=正文:installMockFetch 的兜底回值;包装类把前 2 次 evaluate 覆写为挑战页,
+  // 模拟「安全检测进行中 → 数秒后放行渲染真实正文」的 36kr/火山引擎 WAF 时序。
+  installMockFetch({ bodyText: ARTICLE_TEXT })
+  const { CDP_DEFAULTS, readBodyTextRaw } = await import('../cdp-core.mjs')
+  const oldPoll = CDP_DEFAULTS.pollIntervalMs, oldMax = CDP_DEFAULTS.pollMaxMs
+  CDP_DEFAULTS.pollIntervalMs = 1; CDP_DEFAULTS.pollMaxMs = 20
+  let evals = 0
+  const realWS = globalThis.WebSocket
+  globalThis.WebSocket = class extends realWS {
+    send(data) {
+      const v = JSON.parse(data)
+      if (v.method === 'Runtime.evaluate' && ++evals <= 2) {
+        setTimeout(() => this.onmessage && this.onmessage({ data: JSON.stringify({ id: v.id, result: { result: { value: '火山引擎\n\n正在进行安全检测...' } } }) }), 0)
+        return
+      }
+      super.send(data)
+    }
+  }
+  try {
+    const text = await readBodyTextRaw('127.0.0.1:9222', 'https://36kr.example/p/1')
+    assert.ok(text && text.includes('Gemini 3.8 Flash'), '挑战页过后必须收到真实正文,不得停在挑战页')
+    assert.ok(evals > 2, `应轮询 ≥3 次(evals=${evals}),而非首查即收`)
+  } finally {
+    CDP_DEFAULTS.pollIntervalMs = oldPoll; CDP_DEFAULTS.pollMaxMs = oldMax
+    globalThis.WebSocket = realWS
+    delete globalThis.fetch
+  }
+})
+
+test('cdpFetch：轮询到上限仍只有挑战页 → 收下挑战页文本(isLast 兜底,下游 empty_body 判定与回落语义不变)', async () => {
+  const CH = '火山引擎\n\n正在进行安全检测...\n\n为保障您的访问安全，系统正在检测当前网络环境，该过程通常需要几秒钟，请耐心等待'
+  installMockFetch({ bodyText: CH })
+  const { CDP_DEFAULTS, readBodyTextRaw } = await import('../cdp-core.mjs')
+  const oldPoll = CDP_DEFAULTS.pollIntervalMs, oldMax = CDP_DEFAULTS.pollMaxMs
+  CDP_DEFAULTS.pollIntervalMs = 1; CDP_DEFAULTS.pollMaxMs = 20
+  try {
+    const text = await readBodyTextRaw('127.0.0.1:9222', 'https://36kr.example/p/2')
+    assert.ok(text && text.includes('正在进行安全检测'), 'isLast 兜底:轮询耗尽后收下挑战页文本而非 null')
+  } finally {
+    CDP_DEFAULTS.pollIntervalMs = oldPoll; CDP_DEFAULTS.pollMaxMs = oldMax
+    delete globalThis.fetch; delete globalThis.WebSocket; delete globalThis.WebSocketOpenFail
+  }
+})
+
+test('cdpFetch：轮询到上限仍只有挑战页 → cdpFetch ok:true 收下挑战页文本（isLast 兜底,防挂死;下游代理自行判断回落）', async () => {
+  const CH = '火山引擎\n\n正在进行安全检测...\n\n为保障您的访问安全，系统正在检测当前网络环境，该过程通常需要几秒钟，请耐心等待'
+  installMockFetch({ bodyText: CH })
+  const { CDP_DEFAULTS } = await import('../cdp-core.mjs')
+  const oldPoll = CDP_DEFAULTS.pollIntervalMs, oldMax = CDP_DEFAULTS.pollMaxMs
+  CDP_DEFAULTS.pollIntervalMs = 1; CDP_DEFAULTS.pollMaxMs = 20
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-fetch-challenge-'))
+  try {
+    // 11-16 改动后的真实契约:isLast 兜底让 readBodyTextRaw 返回挑战页文本而非 null,
+    // cdpFetch 照常 ok:true 返回——不会 throw empty_body,也不会挂死;挑战页判定/回落
+    // 由上游 fetch 代理按文本内容自行处理(与 11-16 晨跑 36kr 实际行为一致)。
+    const r = await cdpFetch({ url: 'https://36kr.example/p/3', lockDir: dir, retryDelayMs: 0 })
+    assert.equal(r.ok, true)
+    assert.ok(r.text.includes('正在进行安全检测'), '挑战页文本被如实收下(不静默、不挂死)')
+  } finally {
+    CDP_DEFAULTS.pollIntervalMs = oldPoll; CDP_DEFAULTS.pollMaxMs = oldMax
+    fs.rmSync(dir, { recursive: true, force: true })
+    delete globalThis.fetch; delete globalThis.WebSocket; delete globalThis.WebSocketOpenFail
+  }
+})
+
+test('LOCK_TIMEOUT_MS 盖住关标签 3s + 调度余量（9/19 C2：旧值 30s < 最坏读页 33s，并发必误回落）', () => {
+  assert.ok(LOCK_TIMEOUT_MS >= CDP_DEFAULTS.requestTimeoutMs + CDP_DEFAULTS.pollMaxMs + 5000,
+    `锁等待 ${LOCK_TIMEOUT_MS}ms 应 ≥ open+poll+5s`)
+})

@@ -76,7 +76,14 @@ export async function readBodyTextRaw(host, url) {
         const expr = isLast ? 'document.body ? document.body.innerText : null' : 'document.body && document.readyState !== "loading" ? document.body.innerText : null'
         const { result } = await send('Runtime.evaluate', { expression: expr, returnByValue: true })
         const v = result?.result?.value
-        if (v && String(v).trim()) { text = v; break }
+        if (v && String(v).trim()) {
+          const s = String(v).trim()
+          const isChallenge = s.includes('正在进行安全检测') || s.includes('Just a moment...') || s.includes('Checking your browser') || s.includes('Attention Required! | Cloudflare')
+          if (!isChallenge || isLast) {
+            text = v
+            break
+          }
+        }
         await new Promise(r => setTimeout(r, CDP_DEFAULTS.pollIntervalMs))
       }
       ws.close()
