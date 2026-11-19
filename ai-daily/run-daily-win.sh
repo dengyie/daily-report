@@ -272,6 +272,14 @@ fi
       printf '%s\n' "$LAUNCH_OUT"
       LAUNCH_SECS=$(( $(date '+%s') - LAUNCH_T0 ))
       echo "LAUNCH attempt=$ATTEMPT model=$MODEL try=$TRY/$TRIES rc=$RC secs=$LAUNCH_SECS"
+      # 11-19 review 实证（11-18 gemini 档）：编排器可在 realm completed+payloads 齐（wf json
+      # completed）后死在落盘前——claude rc=0 但 REPORT 永不在盘 → 被误判「慢死」换档，白烧
+      # fallback 档 40-60 分钟。每次 launch 退出后立即在 LAUNCH 循环内兜底 finalize（幂等：
+      # 无 wf json / 报告已在盘均 SKIP），先落盘再判 REPORT-EXISTS / 慢死。
+      if [ ! -f "$REPORT" ]; then
+        node "$REPO_AI/scripts/ai-daily/host-finalize.mjs" --date "$TODAY" --out "$OB_DIR" --since-epoch "$WALL_START" \
+          || echo "HOST-FINALIZE 未落盘（无匹配 workflow json 或 finalize 失败）→ 继续判定"
+      fi
       if [ -f "$REPORT" ]; then
         echo "REPORT-EXISTS 当日产物已落盘（model=$MODEL attempt=$ATTEMPT）→ 视为成功"
         RC=0
