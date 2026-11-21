@@ -73,7 +73,11 @@ export async function readBodyTextRaw(host, url) {
       await send('Runtime.enable')
       for (let i = 0; i < Math.ceil(CDP_DEFAULTS.pollMaxMs / CDP_DEFAULTS.pollIntervalMs); i++) {
         const isLast = i === Math.ceil(CDP_DEFAULTS.pollMaxMs / CDP_DEFAULTS.pollIntervalMs) - 1
-        const expr = isLast ? 'document.body ? document.body.innerText : null' : 'document.body && document.readyState !== "loading" ? document.body.innerText : null'
+        const expr = `(() => {
+          if (!document.body || (!${isLast} && document.readyState === "loading")) return null;
+          if ((location.host.includes("x.com") || location.host.includes("twitter.com")) && !document.querySelector("article") && !${isLast}) return null;
+          return document.body.innerText;
+        })()`
         const { result } = await send('Runtime.evaluate', { expression: expr, returnByValue: true })
         const v = result?.result?.value
         if (v && String(v).trim()) {
