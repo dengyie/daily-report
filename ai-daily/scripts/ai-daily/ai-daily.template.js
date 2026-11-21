@@ -512,7 +512,7 @@ for (const batch of chunkArr(DISCOVER_GROUPS, DISCOVER_BATCH)) {
   // 避免 linuxdo 组被双 push（urls_discovered 翻倍、Fetch 预算空耗）且不被当普通代理喂裸
   // https://linux.do/c/news/34（spec §A 明文裸 fetch 必 403 → 长墙钟失败 + 误标 degraded，违背
   // 「默认不启用时板不崩」）。.filter 后 batch 内不再有 g.cdp 组，.then 无需再判 cdp。
-  const round = await parallel(batch.filter(g => !g.cdp).map(g => () =>
+  const round = await parallel(batch.filter(g => !g.cdp).map(g => () => {
     // 8/16：discover 与 harvest 同款的批量串行（5→3+2 两波）+ 按实测放宽死线 + 瞬时错误重试一次。
     // 8/15 只给 labs 特殊 600s 并在单板冒烟里验证（334s 达标），全量 5 并发时网关争抢使每个 discover 都 3-6×变慢，
     // media-cn 实测 1967s、labs 1213s、opensource/media-en 各 ~770s，全部超死线被 withDeadline 丢弃 → 8/9 板块 degrade、23/23 unreached。
@@ -522,9 +522,18 @@ for (const batch of chunkArr(DISCOVER_GROUPS, DISCOVER_BATCH)) {
     // 8/17 第十四项复盘改回 tries=1：实测 tries=2 在网关差窗口下**没能**保护（8/17 media 两组重试后仍全废），反而烧 80min 死路；
     // 且 safeAgent 的 null 路径（withDeadline settle(null)）不查 TRANSIENT、无条件重试——删正则也拦不住重跑。tries=1 是唯一可靠杠杆，
     // 配合阶段墙钟预算（budgetGate）兜底：失败即如实降级（标 missing_*），时间省给探针/其他阶段。失败可见性由 DISCOVER-FAIL 日志补上。
-    safeAgent(discoverPrompt(g, ctxP), { label: 'disc:' + g.key, phase: 'Discover', schema: DISCOVER_SCHEMA, timeoutMs: g.key === 'labs' ? 1800000 : 2400000 }, 1)
+    // 11-22 review 实证（wf_f3b0d89b：disc:labs/opensource/academic started 后 result 全 0，
+    // BUDGET-SKIP Discover elapsed=1312s ≥ 死线 1020s）：disc 代理 timeout 2400s 形同虚设——
+    // 发现批超死线后 budgetGate 只能拦「新批」，在飞批拦不住，慢代理继续干等到各自超时，
+    // 把 Fetch/Verify 的累计死线整体吃穿 → VERIFY-SALVAGE 只剩救护批 → unverified 恒 10。
+    // 修法：每批启动时按 roomTo('Discover')（纯读）夹紧单代理 timeout——代理死线 = min(档位值,
+    // 距死线剩余 + 300s 收尾余量)。健康跑剩余远大于 2400s → 行为不变；病态窗（grok-search X
+    // 白烧）代理在死线附近自然落地，时间真实让给 Fetch/Verify。
+    const discRoom = budgetGate.roomTo('Discover')
+    const discDeadline = discRoom > 0 ? Math.min(g.key === 'labs' ? 1800000 : 2400000, discRoom + 300000) : 120000
+    return safeAgent(discoverPrompt(g, ctxP), { label: 'disc:' + g.key, phase: 'Discover', schema: DISCOVER_SCHEMA, timeoutMs: discDeadline }, 1)
       .then(r => { if (!r) { log('DISCOVER-FAIL disc:' + g.key + ' → ' + g.boards.join('+') + ' 板降级（代理失败/超时，tries=1 不重跑）'); return null }; return { group: g, boards: g.boards, urls: r.urls || [], noNews: r.noNews || [], nearWindow: r.nearWindow || [], majorOutOfWindow: r.majorOutOfWindow || [], degraded: !!r.degraded } })
-  ))
+  }))
   discoverResults.push(...round)
 }
 const discoverRows = discoverResults.filter(Boolean)
@@ -925,6 +934,10 @@ const voteClaim = async (c, timeoutMs, ladderT0) => {
 }
 const voted = []
 const VERIFY_BATCH = 6
+// 11-22 VERIFY-LATE-BATCH 保留窗：救护批后补跑的前提是距总死线仍余出该窗（覆盖末批 360s 在飞
+// + report 合成入场缓冲）。软目标 90m / TOTAL_LIMIT 30m 下，健康跑救护点通常余量 15-25min，
+// 可补 1-3 批；真病态跑余量归零自然停，语义与旧版「恒截 6 票」相比只多不烧。
+const VERIFY_BATCH_LATE_ROOM_MS = 600000
 // 8/20 第十六项：vtimeout 取固定 AGENT_TIMEOUT_MS，与 room 无关；批间 BREAK 守护留在批次边界，不进入单代理超时。
 // 缓冲保留以为末批（固定 360s）留空间；墙钟是软目标，尾批可超 TOTAL_LIMIT_MS（最坏：真死网关 report 重试 ≤2×SYNTHESIS_LIMIT_MS），由 report 自身 timeout + 降级兜底。
 // 8/28 账本修复（镜像 Fetch 的 stageFetchRan 一次性状态）：救护/后续批次不再调有副作用的 budgetGate('Verify')——
@@ -947,6 +960,22 @@ for (const batch of chunkArr(rankedClaims, VERIFY_BATCH)) {
 	    const vtimeout = AGENT_TIMEOUT_MS
 	    const salvageRes = await parallel(rankedClaims.slice(0, salvageCount).map(c => () => voteClaim(c, vtimeout)))
     voted.push(...salvageRes.filter(Boolean))
+    // 11-22 review 根修（11-16/19/21 三日实证 unverified 恒=10 = MAX_VERIFY 16 − 救护批 6）：
+    // 旧版救护首批后无条件 break——Discover 超死线把 Verify 死线吃穿时，配额内 10 条全部机械截断
+    // 成 unverified，哪怕 Synthesize 前墙钟仍大有富余（软目标 90m，实际 42-45m）。改为：
+    // 救护首批后若距 TOTAL_LIMIT_MS 累计死线仍有 > VERIFY_BATCH_LATE_ROOM_MS 余量，继续按
+    // VERIFY_BATCH 分批补跑 rankedClaims 余量（优先级序已由 rankedClaims 保证）；每批启动前纯读
+    // 复查，余量不足即停。纪律与 8/28 一致：不调有记账副作用的 budgetGate('Verify')。
+    stageVerifyRan = true
+    for (const lateBatch of chunkArr(rankedClaims.slice(salvageCount), VERIFY_BATCH)) {
+      if (TOTAL_LIMIT_MS - RUN_ELAPSED() <= VERIFY_BATCH_LATE_ROOM_MS) {
+        log('VERIFY-LATE-BREAK 距总死线余 ' + Math.round((TOTAL_LIMIT_MS - RUN_ELAPSED()) / 1000) + 's ≤ 保留窗 ' + Math.round(VERIFY_BATCH_LATE_ROOM_MS / 1000) + 's → 余量补跑停止')
+        break
+      }
+      log('VERIFY-LATE-BATCH 补跑 ' + lateBatch.length + ' 条（救护批后墙钟富余，余量补核查）')
+      const lateRes = await parallel(lateBatch.map(c => () => voteClaim(c, vtimeout)))
+      voted.push(...lateRes.filter(Boolean))
+    }
     break
   } else {
     const gate = budgetGate('Verify')

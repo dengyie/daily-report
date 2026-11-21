@@ -227,10 +227,35 @@ test('模板：Verify 死线已过且 0 批已跑 → SALVAGE 救护首批（镜
   // rankedClaims 已经是配额内跨板轮询结果，救护必须切它，不得重走 claimsByBoard。
   assert.match(TPL, /rankedClaims\.slice\(\s*0\s*,\s*salvageCount\s*\)/, '救护切 rankedClaims 前 salvageCount 条（已配额跨板）')
   assert.doesNotMatch(TPL, /roundRobinTake\(claimsByBoard,\s*salvageCount\)/, '不得对未配额 claimsByBoard 再 roundRobin（出链 secondary 会饿死 linuxdo mint）')
-  // 救护后 break（不继续下一批），与 FETCH-SALVAGE 行为一致
-  const vsIdx = TPL.indexOf('VERIFY-SALVAGE')
-  const afterSalvage = TPL.slice(vsIdx, vsIdx + 500)
-  assert.match(afterSalvage, /break/, 'SALVAGE 后 break（不续批）')
+  // 救护后不再无条件 break——11-22 根修：救护批后墙钟富余时按 VERIFY_BATCH 补跑余量
+  // （VERIFY-LATE-BATCH），只受 VERIFY_BATCH_LATE_ROOM_MS 保留窗约束；11-16/19/21 三日
+  // 实证 unverified 恒=10 = MAX_VERIFY 16 − 救护批 6，机械截断必须打开。
+  // 锚点取运行日志字面量（第 959 行 'VERIFY-SALVAGE 已过 Verify 死线…'），不能用裸
+  // 'VERIFY-SALVAGE'——修复①的注释（第 528 行）也含该词，会命中错误位置。
+  const vsIdx = TPL.indexOf('VERIFY-SALVAGE 已过 Verify 死线')
+  const afterSalvage = TPL.slice(vsIdx, vsIdx + 1600)
+  assert.match(afterSalvage, /VERIFY-LATE-BATCH/, 'SALVAGE 后补跑批日志在场（不再恒截 6 票）')
+  assert.match(afterSalvage, /VERIFY_BATCH_LATE_ROOM_MS/, '补跑受总死线保留窗约束（真病态跑仍会停）')
+  assert.match(afterSalvage, /rankedClaims\.slice\(\s*salvageCount\s*\)/, '补跑切 rankedClaims 余量（优先级序沿用）')
+  assert.match(afterSalvage, /break/, '补跑循环外保留 break（退出 for 批循环）')
+})
+
+test('模板：VERIFY-LATE-BATCH 保留窗与补跑纪律（11-22 unverified 恒=10 根修）', () => {
+  // 保留窗常量：须覆盖末批 360s 在飞 + report 合成入场缓冲（600s）。
+  assert.match(TPL, /const VERIFY_BATCH_LATE_ROOM_MS = 600000/, '保留窗 600s 在场（360s 在飞 + 合成缓冲）')
+  // 每批启动前纯读复查，余量不足即停——不得调用有记账副作用的 budgetGate('Verify')。
+  // 锚点取复查表达式本身（模板 971 行），常量声明在其前 30 余行，向前留足窗口。
+  const lateIdx = TPL.indexOf('TOTAL_LIMIT_MS - RUN_ELAPSED() <= VERIFY_BATCH_LATE_ROOM_MS')
+  assert.ok(lateIdx > 0, '每批启动前纯读复查表达式在场')
+  const lateSlice = TPL.slice(lateIdx - 600, lateIdx + 900)
+  assert.match(lateSlice, /VERIFY-LATE-BREAK/, '余量不足时的停止日志')
+  // 补跑纪律：lateBatch 循环内不得出现 budgetGate('Verify')（8/28 账本纪律）。
+  // 先剥离 // 注释（上游注释复述纪律时会含该字样），窗口截到 salvage 分支结束
+  // （'} else {' 之后是正常路径的合法记账，不属补跑循环）。
+  const elseIdx = TPL.indexOf('} else {', lateIdx)
+  const lateCode = TPL.slice(lateIdx - 600, elseIdx > 0 ? elseIdx : lateIdx + 900)
+    .split('\n').filter(l => !l.trim().startsWith('//')).join('\n')
+  assert.doesNotMatch(lateCode, /budgetGate\('Verify'\)/, '补跑循环不记账（stageVerifyRan 纪律延续）')
 })
 
 test('模板：Verify 截断的配额内 claim 必须记 unverified，不得从账本蒸发', () => {
