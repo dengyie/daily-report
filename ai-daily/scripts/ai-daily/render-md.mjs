@@ -102,9 +102,9 @@ const synthMojibakeHit = summary => {
   if (_RARE_CJK_RE.test(s)) return 'RARE_CJK'
   return null
 }
-// 审计并原位修复 report（mutate items[].summary / 未核查项 title）。返回 { replaced, atoms, samples, mojibake, titleFixed }。
+// 审计并原位修复 report（mutate items[].summary / 未核查项 title）。返回 { replaced, atoms, samples, mojibake, titleFixed, dropped }。
 export const auditReportBodies = (report, confirmed, unverified) => {
-  const res = { replaced: 0, atoms: 0, samples: [], mojibake: 0, titleFixed: 0 }
+  const res = { replaced: 0, atoms: 0, samples: [], mojibake: 0, titleFixed: 0, dropped: 0 }
   if (!report || !Array.isArray(report.sections)) return res
   const gold = _goldAtomsOf(confirmed)
   // 注：title 门（下方 11-14 P2）不依赖金标——金标为空（confirmed=0）时 title 校验仍须工作
@@ -143,10 +143,26 @@ export const auditReportBodies = (report, confirmed, unverified) => {
       if (bad || miss.length) {
         res.atoms += miss.length
         if (bad) res.mojibake++
+        // 11-22 根修（11-22 晨跑实证）：未核查项命中原子门 → 删条目，不顶替。
+        // 11-22 实证机制链：report 代理在「待核实」小节幻觉重列 confirmed 原文（真 unverified
+        // 池 7 条被无视）→ 原子门检出金标外原子 → 同源顶替为 confirmed claim 原文 → title 门
+        // 改成 claim 前缀 → 待核实与已核查两小节逐字重复且挂「未核查」徽标，信息量为负。
+        // 未核查项的合法内容只能来自 unverified 池——顶替源是 confirmed 即证明该 item 不是
+        // unverified 条目的改写，直接弃用（与 claim-gate「垃圾不进池」同一哲学：删，不粉饰）。
+        const isUnchecked = isUncheckedStatus(it.status)
+        const claim = (confirmed || []).find(c => (it.sources || []).some(u => normURL(u) && normURL(u) === normURL(c.sourceUrl || c.source)))
+        if (isUnchecked) {
+          if (claim && claim.claim) {
+            it._dropReason = 'unchecked-duplicate-of-confirmed'
+            res.dropped++
+            if (res.samples.length < 5) res.samples.push('DROP-UNCHECKED ' + String(it.title || '').slice(0, 40))
+          }
+          // 无对应 confirmed 源的未核查项保留原样（真 unverified 线索，宁可错留不可误删）
+          continue
+        }
         // 11-12 防御：template 内存结构是 sourceUrl（L993 confirmed），finalize 落盘形变为
         // source（L1330 映射）——双字段兼容，测试/未来调用方传落盘结构时替换路径不再静默失配
         //（11-11 用真实落盘 JSON 端到端验证时实锤：find 永远 undefined → res.replaced=0）。
-        const claim = (confirmed || []).find(c => (it.sources || []).some(u => normURL(u) && normURL(u) === normURL(c.sourceUrl || c.source)))
         if (claim && claim.claim) {
           it.summary = claim.claim
           res.replaced++

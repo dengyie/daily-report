@@ -334,3 +334,59 @@ test('auditReportBodies title 门：无 claim 来源对应 → title 保留（�
   assert.equal(r.titleFixed, 0)
   assert.equal(report.sections[0].items[0].title, '凭空标题无来源', '无替换源不动')
 })
+
+// ─── 11-22 根修：未核查项命中原子门 → 删条目，不顶替（11-22 晨跑实证）───
+// 实证链：report 代理在「待核实」小节幻觉重列 confirmed 原文（真 unverified 池 7 条被无视）
+// → 原子门检出金标外原子 → 同源顶替为 confirmed claim 原文 → title 门改成 claim 前缀
+// → 待核实与已核查两小节逐字重复且挂「未核查」徽标，信息量为负。
+// fixture 取自 11-22 verified-claims.json 真实形态（GPT-6.2 Astra / Inkling 2 Mini）。
+
+test('auditReportBodies 原子门：未核查项 summary 与 confirmed 同源 → 标记删除，不顶替（11-22 实证回放）', () => {
+  const confirmed = [
+    { claim: '在内部自适应评估中，针对 GPT-6.2 Astra 提取先前提示词中受保护推理的平均攻击成功率从 GPT-6 Astra 的 54.0% 降至 0.2%。', quote: 'The average attack success rate fell from 54.0%', sourceUrl: 'https://openai.com/index/combatting-adversarial-distillation/' },
+    { claim: 'Inkling 2 Mini 采用循环 Transformer 架构，每个 token 将模型的中间层运行三次。', quote: 'Inkling 2 Mini is a looped transformer', sourceUrl: 'https://thinkingmachines.ai/news/inkling-2-mini' },
+  ]
+  const unverified = [
+    { claim: 'OpenAI 在请求级防御中部署了输入分类器以检测提取受保护推理的企图。', sourceUrl: 'https://openai.com/index/combatting-adversarial-distillation/' },
+    { claim: 'Inkling 2 Mini 的大多数权重在原生 NVFP4 下训练并部署，最后四层采用 MXFP8。', sourceUrl: 'https://thinkingmachines.ai/news/inkling-2-mini' },
+  ]
+  const report = { sections: [{ board: 'labs', title: '待核实', items: [
+    // 11-22 真实幻觉形态：待核实小节重列 confirmed 内容的改写（含金标外凭空原子「内部红队」「0.18%」等）
+    { title: 'GPT-6.2 Astra 防线评估', summary: 'OpenAI 内部红队评估显示 GPT-6.2 Astra 提示词推理窃取率降至 0.2%，前期基线为 54.0%。', sources: [confirmed[0].sourceUrl], confidence: 'low', status: '未核查' },
+    { title: 'Inkling 2 Mini 架构', summary: 'Thinking Machines 官方发布 Inkling 2 Mini，循环 Transformer 让中间层每 token 运行三次。', sources: [confirmed[1].sourceUrl], confidence: 'low', status: '未核查' },
+  ] }] }
+  const r = auditReportBodies(report, confirmed, unverified)
+  assert.equal(r.dropped, 2, '两条同源重复全标记删除: ' + JSON.stringify(r))
+  assert.equal(r.replaced, 0, '不顶替（顶替必逐字重复）')
+  const kept = report.sections[0].items.filter(it => !it._dropReason)
+  assert.equal(kept.length, 0, '全部标记 _dropReason 待编排层过滤: ' + JSON.stringify(report.sections[0].items.map(i => i._dropReason)))
+})
+
+test('auditReportBodies 原子门：未核查项无 confirmed 源对应 → 保留（真 unverified 线索不误删）', () => {
+  const confirmed = [
+    { claim: 'VFlash 在 3D 点运动预测上实现约 25 倍生成提速。', quote: '25x faster', sourceUrl: 'https://huggingface.co/papers/2611.08449' },
+  ]
+  const unverified = [
+    { claim: 'OpenAI 部署了输入分类器以检测提取企图，AcmeLabs 评估其覆盖率。', sourceUrl: 'https://openai.com/index/x' },
+  ]
+  const report = { sections: [{ board: 'labs', title: '待核实', items: [
+    // 凭空原子 AcmeLabs 但 sources 无 confirmed 对应 → 无可靠替换源 → 原样保留
+    { title: '分类器部署', summary: unverified[0].claim, sources: ['https://openai.com/index/x'], confidence: 'low', status: '未核查' },
+  ] }] }
+  const r = auditReportBodies(report, confirmed, unverified)
+  assert.equal(r.dropped, 0, '无 confirmed 源对应不删（宁可错留不可误删）')
+  assert.equal(report.sections[0].items.length, 1, '条目保留')
+})
+
+test('auditReportBodies 原子门：已核查项仍走顶替路径（11-22 删除只对未核查项，不扩口径）', () => {
+  const confirmed = [
+    { claim: 'VFlash 在 3D 点运动预测上实现约 25 倍生成提速，平均成功率 70.2%。', quote: '25x faster with 70.2%', sourceUrl: 'https://huggingface.co/papers/2611.08449' },
+  ]
+  const report = { sections: [{ board: 'labs', title: '实验室', items: [
+    { title: 'VFlash 提速', summary: 'VFlash 提速约 25 倍，由 AcmeLabs 发布。', sources: ['https://huggingface.co/papers/2611.08449'], confidence: 'high', status: '已核查 2-0' },
+  ] }] }
+  const r = auditReportBodies(report, confirmed, [])
+  assert.equal(r.replaced, 1, '已核查项凭空原子仍顶替为 claim 原文')
+  assert.equal(r.dropped, 0, '不删已核查项')
+  assert.ok(report.sections[0].items[0].summary.includes('VFlash'), '替换生效')
+})

@@ -1381,6 +1381,17 @@ if (report) {
 	titleClaimMismatched = _audit.titleFixed || 0
 	if (_audit.titleFixed) log('TITLE-CLAIM-FIX 未核查项 title 与 claim 零实体交集 ' + _audit.titleFixed + ' 条 → 弃 title 用 claim 原文' + (_audit.samples.length ? '：' + _audit.samples.filter(s => s.startsWith('TITLE')).join('；') : ''))
 	if (_audit.atoms > 0) log('SYNTH-BODY-AUDIT 幻觉原子 ' + _audit.atoms + ' 个 / 替换 ' + _audit.replaced + ' 条 summary' + (_audit.samples.length ? '：' + _audit.samples.join('；') : ''))
+	// 11-22 根修：未核查项命中原子门且源是 confirmed → 整条删除（顶替必然与已核查小节逐字重复）。
+	if (_audit.dropped > 0) {
+		let removed = 0
+		for (const sec of report.sections || []) {
+			if (!sec || !Array.isArray(sec.items)) continue
+			const before = sec.items.length
+			sec.items = sec.items.filter(it => !(it && it._dropReason === 'unchecked-duplicate-of-confirmed'))
+			removed += before - sec.items.length
+		}
+		log('SYNTH-BODY-DROP 未核查项与已核查同源重复 ' + _audit.dropped + ' 条（原子门命中+confirmed 源）→ 删除 ' + removed + ' 条，待核实小节只留真 unverified 线索')
+	}
 }
 
 // ─── md 确定性渲染（report 成功 → 完整版；失败 → 降级版）。render-md.mjs，不再有 mdWriter 代理。───
