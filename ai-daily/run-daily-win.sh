@@ -192,11 +192,26 @@ fi
     CLAUDE_SETTINGS_FLAG=(--settings "{\"env\":{\"ANTHROPIC_BASE_URL\":\"$GATEWAY_DIRECT_URL\"}}")
     # 11-12 教训：此处曾单发一次 probe_gateway，网关上游 TTFT 抖动（504）偶发一击即弃 → 当日空转。
     # 改走 probe_wait（PROBE_RETRY=3、间隔 PROBE_WAIT_S），launch 段同款纪律；网关偶发抖动靠重复请求消化。
-    if probe_wait "${ORCH_LADDER[0]}"; then
-      echo "GATEWAY-ROUTE direct=$GATEWAY_DIRECT_URL（curl+CLI 双探针通过，EasyTier 直连）"
+    # 11-24 根修（11-24 晨跑实证：gemini-3.8-flash 渠道 503「可用渠道不存在」，CLI 探针 3 连败
+    # → ABORT 整轮）：主路由决策探针只探首档——首档模型渠道挂 ≠ 路由不可用，launch 阶梯里
+    # deepseek/grok 探针全通却被连带放弃，当日空转。改为**逐档探测**：按 ORCH_LADDER 顺序找
+    # 第一档探针通过的模型作为 GATEWAY_ROUTE_MODEL，其通过即证明「路由 + 该档渠道」可用；
+    # 全档败 = 真·网关级故障，才 ABORT（语义与 mesh-first「无运行时自动降级」一致——这里降的
+    # 是「首档偏好」，不是运行时换道：launch 仍从 ORCH_LADDER[0] 起步，探不通的档在 launch 段
+    # PROBE-EXHAUSTED 自然跳过）。GATEWAY_ROUTE_MODEL 仅作日志诊断输出。
+    GATEWAY_ROUTE_MODEL=""
+    for _PM in "${ORCH_LADDER[@]}"; do
+      if probe_wait "$_PM"; then
+        GATEWAY_ROUTE_MODEL="$_PM"
+        break
+      fi
+      echo "ROUTE-PROBE-FAIL $_PM 全败 → 试下一档"
+    done
+    if [ -n "$GATEWAY_ROUTE_MODEL" ]; then
+      echo "GATEWAY-ROUTE direct=$GATEWAY_DIRECT_URL（curl+CLI 双探针通过，EasyTier 直连，route-probe=$GATEWAY_ROUTE_MODEL）"
     else
-      notify "日报未生成 $TODAY" "GATEWAY-ROUTE ABORT：直连 curl 通但 CLI 探针 ${PROBE_RETRY} 连败（mesh-first 不回退 CF）"
-      echo "GATEWAY-ROUTE ABORT（直连 curl 通但 CLI 探针 ${PROBE_RETRY} 连败，末次 out: ${PROBE_LAST_OUT:-<empty>}；2026-11-12 mesh-first：不回退 CF，当日放弃，次日幂等重试）"
+      notify "日报未生成 $TODAY" "GATEWAY-ROUTE ABORT：直连 curl 通但 CLI 探针全档 ${PROBE_RETRY} 连败（mesh-first 不回退 CF）"
+      echo "GATEWAY-ROUTE ABORT（直连 curl 通但 CLI 探针全档连败，末次 out: ${PROBE_LAST_OUT:-<empty>}；2026-11-12 mesh-first：不回退 CF，当日放弃，次日幂等重试）"
       exit 1
     fi
   else
