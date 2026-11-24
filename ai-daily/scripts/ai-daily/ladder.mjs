@@ -12,7 +12,9 @@
 //
 // 时钟只能用注入的 now（workflow realm 无 Date.now/performance）。
 
-export const DEFAULT_LADDER = ['deepseek-v4-flash', 'grok-4.6', 'claude-opus-4-8', 'gemini-3.7-flash-high']
+// 2026-11-24 用户指令：默认 deepseek-v4-flash、兜底 glm-5.3-flash（gemini 渠道 503 实证
+// 主路由 ABORT 连坐整轮；glm 经 claude CLI 网关探针实测可用）。阶梯收敛两档，移除 grok/opus/gemini。
+export const DEFAULT_LADDER = ['deepseek-v4-flash', 'glm-5.3-flash']
 export const DEFAULT_LADDER_BUDGET_MS = 900000
 
 /**

@@ -90,18 +90,19 @@ test('Windows runner：探针与 launch 模型跟随 attempt 档，探针认 111
 })
 
 // 原 shim 测 5（编排器阶梯）：ORCH_LADDER 有序在场 + 换级日志 + 循环遍历。顺序为 Windows 当前
-// 生产决策（11-01 用户指令移除 claude 档），锁定顺序防静默漂移；改阶梯时须同更本断言。
-test('Windows runner：ORCH_LADDER 阶梯在场（gemini-3.8 主写 → deepseek → grok，无 claude 档）', () => {
+// 生产决策（11-24 用户指令：deepseek 主写 + glm 兜底），锁定顺序防静默漂移；改阶梯时须同更本断言。
+test('Windows runner：ORCH_LADDER 阶梯在场（deepseek 主写 → glm-5.3 兜底，无 gemini/claude 档）', () => {
   const sh = win()
   const ladder = sh.match(/ORCH_LADDER=\(([^)]+)\)/)
   assert.ok(ladder, 'ORCH_LADDER 数组在场')
   const models = ladder[1].trim().split(/\s+/)
   assert.deepEqual(
     models,
-    ['gemini-3.8-flash', 'deepseek-v4-flash', 'grok-4.6'],
-    '编排器阶梯须与 11-01 生产决策一致：gemini-3.8 主写，deepseek 兜底，grok 末位',
+    ['deepseek-v4-flash', 'glm-5.3-flash'],
+    '编排器阶梯须与 11-24 生产决策一致：deepseek-v4-flash 主写，glm-5.3-flash 兜底',
   )
   assert.doesNotMatch(sh, /ORCH_LADDER=\([^)]*claude/, '11-01 用户指令：阶梯不含 claude 档（串会话双雷）')
+  assert.doesNotMatch(sh, /ORCH_LADDER=\([^)]*gemini/, '11-24 用户指令：阶梯不含 gemini 档（渠道 503 实证 ABORT）')
   assert.match(sh, /DEEPSEEK_TRIES=3/, 'DeepSeek 同档重试次数在场')
   assert.match(sh, /FALLBACK_TRIES=2/, '降级模型每档重试在场')
   assert.match(sh, /TRIES="\$DEEPSEEK_TRIES"/, '首档重试接 DEEPSEEK_TRIES')

@@ -75,9 +75,10 @@ LAUNCH_FAST_DEATH_S=600
 # 3.8-flash 且为其生产写手，网关可用性有日常实证）。gemini 档「可能不跑 skill」的行为注意不变。
 # 2026-10-31 夜：行为实测——Workflow 工具按模型可用（gemini-3.8=YES / opus=NO，直接问询复现两遍），
 # 而 opus 探针的垃圾回复（串会话）当晚无解 → gemini-3.8 置首保出刊，opus 退居第二等上游恢复。
-# 2026-11-01 用户指令：日报默认模型不再用 claude——移除 opus 档（其上游 hyb-claude 串会话 +
-# justwoker 死亡的双雷当天也实证了这一点）。阶梯=gemini-3.8 主写，deepseek 兜底，grok-4.6 末位保底。
-ORCH_LADDER=(gemini-3.8-flash deepseek-v4-flash grok-4.6)
+# 2026-11-24 用户指令：默认模型换 deepseek-v4-flash、兜底 glm-5.3-flash。gemini 渠道当晨 503
+# 「可用渠道不存在」实证 ABORT（逐档探针根修 5d27b83 才放行到 deepseek 档），glm-5.3-flash
+# 经 claude CLI 网关实测探针通过。阶梯收敛为两档，移除 gemini/grok。探针失败档自动跳过。
+ORCH_LADDER=(deepseek-v4-flash glm-5.3-flash)
 # 2026-10-31 TDZ 根因配套：window 必须由宿主算好字面量塞进 prompt——模型自己算/漏传时，
 # workflow 的 args 缺 window → defaultWindowFrom TDZ 秒死（模板已修，双保险仍保留）。
 WFROM=$(date -d '-2 days' +%F)

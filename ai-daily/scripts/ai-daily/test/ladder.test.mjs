@@ -7,7 +7,8 @@ import { DEFAULT_LADDER, DEFAULT_LADDER_BUDGET_MS, makeSafeAgentWithLadder } fro
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const TRANSIENT = /(422|429|5\d\d|524|timeout|timed out|connection closed|model not found|upstream|gateway|cloudflare)/i
-const LADDER = ['deepseek-v4-flash', 'grok-4.6', 'claude-opus-4-8', 'gemini-3.7-flash-high']
+// 2026-11-24 用户指令：两档阶梯（deepseek 主写 → glm-5.3 兜底）。
+const LADDER = ['deepseek-v4-flash', 'glm-5.3-flash']
 const TRANSIENT_MSG = '524 gateway timeout'
 
 function makeHarness({ byModel = {}, costs = {}, AGENT_TIMEOUT_MS = 360000 } = {}) {
@@ -36,50 +37,47 @@ function makeHarness({ byModel = {}, costs = {}, AGENT_TIMEOUT_MS = 360000 } = {
   return { run, calls, logs, recovered, exhausted }
 }
 
-test('DEFAULT_LADDER 四级 id 与默认预算 900000', () => {
+test('DEFAULT_LADDER 两档 id 与默认预算 900000', () => {
   assert.deepEqual(DEFAULT_LADDER, LADDER)
   assert.equal(DEFAULT_LADDER_BUDGET_MS, 900000)
 })
 
-test('四级逐降：前三级 TRANSIENT，gemini 成功 → recovered at gemini', async () => {
+test('逐级降：除末级外全 TRANSIENT，末级成功 → recovered at 末级', async () => {
   const h = makeHarness({
-    byModel: {
-      'deepseek-v4-flash': { throw: TRANSIENT_MSG },
-      'grok-4.6': { throw: TRANSIENT_MSG },
-      'claude-opus-4-8': { throw: TRANSIENT_MSG },
-      'gemini-3.7-flash-high': { value: { body: 'ok' } },
-    },
+    byModel: Object.fromEntries(LADDER.map((m, i) => [m, i === LADDER.length - 1 ? { value: { body: 'ok' } } : { throw: TRANSIENT_MSG }])),
   })
+  const last = LADDER[LADDER.length - 1]
   const r = await h.run('hello', { label: 'report', timeoutMs: 600000 }, LADDER, 900000)
   assert.deepEqual(r, { body: 'ok' })
   assert.deepEqual(h.calls.map(c => c.model), LADDER)
-  assert.ok(h.logs.some(l => /LADDER-OK report recovered at gemini-3\.7-flash-high/.test(l)), '须含 LADDER-OK recovered at gemini：' + h.logs.join(' | '))
-  assert.deepEqual(h.recovered, [{ label: 'report', model: 'gemini-3.7-flash-high' }])
+  assert.ok(h.logs.some(l => new RegExp('LADDER-OK report recovered at ' + last.replace(/\./g, '\.')).test(l)), '须含 LADDER-OK recovered at 末级：' + h.logs.join(' | '))
+  assert.deepEqual(h.recovered, [{ label: 'report', model: last }])
   assert.equal(h.exhausted.length, 0)
 })
 
-test('中途成功：deepseek TRANSIENT、grok 成功 → 不走 opus/gemini', async () => {
+test('中途成功：首级 TRANSIENT、次级成功 → 不爬更后级', async () => {
   const h = makeHarness({
     byModel: {
-      'deepseek-v4-flash': { throw: TRANSIENT_MSG },
-      'grok-4.6': { value: { body: 'grok-ok' } },
+      [LADDER[0]]: { throw: TRANSIENT_MSG },
+      [LADDER[1]]: { value: { body: 'next-ok' } },
     },
   })
   const r = await h.run('hello', { label: 'report' }, LADDER, 900000)
-  assert.deepEqual(r, { body: 'grok-ok' })
-  assert.deepEqual(h.calls.map(c => c.model), ['deepseek-v4-flash', 'grok-4.6'])
-  assert.ok(h.logs.some(l => /LADDER-OK report recovered at grok-4\.6/.test(l)))
-  assert.deepEqual(h.recovered, [{ label: 'report', model: 'grok-4.6' }])
+  assert.deepEqual(r, { body: 'next-ok' })
+  assert.deepEqual(h.calls.map(c => c.model), [LADDER[0], LADDER[1]])
+  assert.ok(h.logs.some(l => new RegExp('LADDER-OK report recovered at ' + LADDER[1].replace(/\./g, '\.')).test(l)))
+  assert.deepEqual(h.recovered, [{ label: 'report', model: LADDER[1] }])
 })
 
-test('四级全废：全部 TRANSIENT → null + LADDER-FAIL at gemini', async () => {
+test('全阶梯废：全部 TRANSIENT → null + LADDER-FAIL at 末级', async () => {
   const h = makeHarness({
     byModel: Object.fromEntries(LADDER.map(m => [m, { throw: TRANSIENT_MSG }])),
   })
   const r = await h.run('hello', { label: 'report' }, LADDER, 900000)
   assert.equal(r, null)
-  assert.equal(h.calls.length, 4)
-  assert.ok(h.logs.some(l => /LADDER-FAIL report at gemini-3\.7-flash-high/.test(l)), '须含终局 LADDER-FAIL：' + h.logs.join(' | '))
+  assert.equal(h.calls.length, LADDER.length)
+  const lastRe = new RegExp('LADDER-FAIL report at ' + LADDER[LADDER.length - 1].replace(/\./g, '\.'))
+  assert.ok(h.logs.some(l => lastRe.test(l)), '须含终局 LADDER-FAIL：' + h.logs.join(' | '))
   assert.deepEqual(h.exhausted, ['report'])
   assert.equal(h.recovered.length, 0)
 })
@@ -96,46 +94,49 @@ test('非 TRANSIENT 早停：schema 失败不换级', async () => {
   assert.deepEqual(h.exhausted, ['report'])
 })
 
-test('null 路径换级：deepseek 超时 null → grok 成功', async () => {
+test('null 路径换级：首级超时 null → 次级成功', async () => {
   const h = makeHarness({
     byModel: {
-      'deepseek-v4-flash': { value: null },
-      'grok-4.6': { value: { body: 'from-null' } },
+      [LADDER[0]]: { value: null },
+      [LADDER[1]]: { value: { body: 'from-null' } },
     },
   })
   const r = await h.run('hello', { label: 'v0:claim', timeoutMs: 360000 }, LADDER, 900000)
   assert.deepEqual(r, { body: 'from-null' })
-  assert.deepEqual(h.calls.map(c => c.model), ['deepseek-v4-flash', 'grok-4.6'])
-  assert.ok(h.logs.some(l => /LADDER-NEXT v0:claim deepseek-v4-flash → grok-4\.6 \(null\)/.test(l)), '须含 null 换级日志：' + h.logs.join(' | '))
-  assert.deepEqual(h.recovered, [{ label: 'v0:claim', model: 'grok-4.6' }])
+  assert.deepEqual(h.calls.map(c => c.model), [LADDER[0], LADDER[1]])
+  const nextRe = new RegExp('LADDER-NEXT v0:claim ' + LADDER[0].replace(/\./g, '\\.') + ' → ' + LADDER[1].replace(/\./g, '\\.') + ' \\(null\\)')
+  assert.ok(h.logs.some(l => nextRe.test(l)), '须含 null 换级日志：' + h.logs.join(' | '))
+  assert.deepEqual(h.recovered, [{ label: 'v0:claim', model: LADDER[1] }])
 })
 
-test('预算耗尽：deepseek 300ms + grok 400ms、budget=600 → 停在 grok 不跑 opus', async () => {
+test('预算耗尽：两级全 TRANSIENT、首级后预算已尽 → 停在首级不爬次级', async () => {
+  // 两档阶梯下 LADDER-BUDGET 唯一可触发点 = 首级失败后爬次级前（末级失败直接 LADDER-FAIL）。
   const h = makeHarness({
-    costs: { 'deepseek-v4-flash': 300, 'grok-4.6': 400, 'claude-opus-4-8': 100 },
+    costs: { [LADDER[0]]: 700 },
     byModel: {
-      'deepseek-v4-flash': { throw: TRANSIENT_MSG },
-      'grok-4.6': { throw: TRANSIENT_MSG },
-      'claude-opus-4-8': { value: { body: 'should-not-run' } },
+      [LADDER[0]]: { throw: TRANSIENT_MSG },
+      [LADDER[1]]: { value: { body: 'should-not-run' } },
     },
   })
   const r = await h.run('hello', { label: 'report' }, LADDER, 600)
   assert.equal(r, null)
-  assert.deepEqual(h.calls.map(c => c.model), ['deepseek-v4-flash', 'grok-4.6'])
-  assert.ok(h.logs.some(l => /LADDER-BUDGET report .*停在 grok-4\.6/.test(l)), '须含 LADDER-BUDGET 停在 grok：' + h.logs.join(' | '))
+  assert.deepEqual(h.calls.map(c => c.model), [LADDER[0]])
+  const stopRe = new RegExp('LADDER-BUDGET report .*停在 ' + LADDER[0].replace(/\./g, '\\.'))
+  assert.ok(h.logs.some(l => stopRe.test(l)), '须含 LADDER-BUDGET 停在首级：' + h.logs.join(' | '))
   assert.deepEqual(h.exhausted, ['report'])
 })
 
-test('预算关闭：budgetMs=0 四级全 TRANSIENT → 跑满四级，无 LADDER-BUDGET', async () => {
+test('预算关闭：budgetMs=0 全阶梯 TRANSIENT → 跑满阶梯，无 LADDER-BUDGET', async () => {
   const h = makeHarness({
-    costs: { 'deepseek-v4-flash': 300, 'grok-4.6': 400, 'claude-opus-4-8': 400, 'gemini-3.7-flash-high': 400 },
+    costs: Object.fromEntries(LADDER.map(m => [m, 400])),
     byModel: Object.fromEntries(LADDER.map(m => [m, { throw: TRANSIENT_MSG }])),
   })
   const r = await h.run('hello', { label: 'report' }, LADDER, 0)
   assert.equal(r, null)
-  assert.equal(h.calls.length, 4)
+  assert.equal(h.calls.length, LADDER.length)
   assert.ok(!h.logs.some(l => /LADDER-BUDGET/.test(l)), 'budgetMs=0 不得提前停：' + h.logs.join(' | '))
-  assert.ok(h.logs.some(l => /LADDER-FAIL report at gemini-3\.7-flash-high/.test(l)))
+  const lastRe = new RegExp('LADDER-FAIL report at ' + LADDER[LADDER.length - 1].replace(/\./g, '\.'))
+  assert.ok(h.logs.some(l => lastRe.test(l)))
 })
 
 test('单级阶梯：仅 deepseek TRANSIENT → 立即 null，不尝试其它模型', async () => {
@@ -200,21 +201,22 @@ test('生产形状 withDeadline：reject 透传 → schema 不换级、524 换�
   assert.ok(!schema.logs.some(l => /LADDER-NEXT/.test(l)), 'schema reject 不得换级：' + schema.logs.join(' | '))
 
   const gw = make({
-    'deepseek-v4-flash': { throw: TRANSIENT_MSG },
-    'grok-4.6': { value: { body: 'recovered' } },
+    [LADDER[0]]: { throw: TRANSIENT_MSG },
+    [LADDER[1]]: { value: { body: 'recovered' } },
   })
   assert.deepEqual(await gw.run('p', { label: 'report' }, LADDER, 900000), { body: 'recovered' })
-  assert.deepEqual(gw.calls, ['deepseek-v4-flash', 'grok-4.6'])
-  assert.ok(gw.logs.some(l => /LADDER-NEXT report deepseek-v4-flash → grok-4\.6/.test(l)))
+  assert.deepEqual(gw.calls, [LADDER[0], LADDER[1]])
+  const nextRe = new RegExp('LADDER-NEXT report ' + LADDER[0].replace(/\./g, '\.') + ' → ' + LADDER[1].replace(/\./g, '\.'))
+  assert.ok(gw.logs.some(l => nextRe.test(l)))
 })
 
-test('共享 t0：两票串行对同一 600ms 预算，后票不得再独立爬 grok/opus', async () => {
+test('共享 t0：两票串行对同一 600ms 预算，后票不得再爬后续级', async () => {
   // P2-2：verify 每票自己 t0=now() 会让后票（或后批）重新吃满 LADDER_BUDGET_MS。
   // 共享阶段 t0 后：票 A 300+400 已超 600；票 B 只允许再试当前级（tier 0）然后停。
   const calls = []
   const logs = []
   let t = 0
-  const costs = { 'deepseek-v4-flash': 300, 'grok-4.6': 400, 'claude-opus-4-8': 100, 'gemini-3.7-flash-high': 100 }
+  const costs = { [LADDER[0]]: 300, [LADDER[1]]: 400 }
   const agent = async (prompt, opts) => {
     calls.push({ prompt, model: opts.model })
     t += costs[opts.model] || 0
@@ -229,12 +231,13 @@ test('共享 t0：两票串行对同一 600ms 预算，后票不得再独立爬 
   const r2 = await run('vote-b', { label: 'v0:b' }, LADDER, 600, t0)
   assert.equal(r1, null)
   assert.equal(r2, null)
-  assert.deepEqual(calls.filter(c => c.prompt === 'vote-a').map(c => c.model), ['deepseek-v4-flash', 'grok-4.6'])
+  assert.deepEqual(calls.filter(c => c.prompt === 'vote-a').map(c => c.model), [LADDER[0], LADDER[1]])
   assert.deepEqual(
     calls.filter(c => c.prompt === 'vote-b').map(c => c.model),
-    ['deepseek-v4-flash'],
-    '后票共享 t0 已耗尽，只试 tier 0 即停，不得再爬 grok/opus：' + JSON.stringify(calls),
+    [LADDER[0]],
+    '后票共享 t0 已耗尽，只试 tier 0 即停，不得再爬后续级：' + JSON.stringify(calls),
   )
-  assert.ok(logs.some(l => /LADDER-BUDGET v0:b .*停在 deepseek-v4-flash/.test(l)), '后票须 LADDER-BUDGET：' + logs.join(' | '))
+  const stopRe = new RegExp('LADDER-BUDGET v0:b .*停在 ' + LADDER[0].replace(/\./g, '\.'))
+  assert.ok(logs.some(l => stopRe.test(l)), '后票须 LADDER-BUDGET：' + logs.join(' | '))
   assert.ok(!calls.some(c => c.model === 'ladderT0' || c.prompt === undefined))
 })
