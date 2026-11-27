@@ -272,6 +272,15 @@ test('CLI：抓取失败（mock transport 抛错）→ 非零退出，stdout 空
   assert.match(res.stderr, /linuxdo-prefetch:/, 'stderr 带诊断前缀')
 })
 
+test('CLI：抓取失败 → stderr 附 9222 现场快照（11-28 probeCdpScene，失败取证不再盲猜）', () => {
+  const res = runCli(['--host', '127.0.0.1:1', '--max-sources', '5'])
+  // 现场快照行恒出现（host=127.0.0.1:1 连不上时 browser=n/a pages=-1 linuxdo_pages=-1 兜底形态），
+  // 且不改变非零退出码——快照失败同样不影响。
+  assert.match(res.stderr, /9222 现场: browser=.* pages=\d+ linuxdo_pages=\d+/,
+    'stderr 末尾有现场快照行（browser/pages/linuxdo_pages 三字段）')
+  assert.notEqual(res.code, 0, '快照不改变失败退出码')
+})
+
 test('CLI：非法参数 → 非零退出 + stderr 参数错误，stdout 空', () => {
   const bad = runCli(['--max-sources', 'abc'])
   assert.notEqual(bad.code, 0, '非法 --max-sources 非零')

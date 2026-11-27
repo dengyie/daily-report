@@ -147,6 +147,27 @@ const isTransientPrefetchError = e => {
   if (reason === 'empty_posts') return false // 确定性：帖子全被噪声过滤，重试无意义
   return true // empty_pages / fetch failed / ECONNREFUSED 等 CDP 链路抖动一律视为瞬态
 }
+/** 9222 现场只读快照（浏览器版本/页面标签统计/linux.do 标签数）——prefetch 失败时给晨跑取证用。
+ * 2026-11-28：11-26/27 晨跑 empty_pages 连败后取证盲猜「9222 Chrome 晨间状态」（无法区分浏览器
+ * 不对/没登录与页面未就绪），留下场景证据下次失败直接归因。纪律：纯 GET /json/version +
+ * /json/list，不开标签不关标签，绝不写任何浏览器状态。 */
+async function probeCdpScene(host) {
+  const get = path => fetch('http://' + host + path, { signal: AbortSignal.timeout(5000) })
+    .then(r => r.text()).catch(() => null)
+  const out = { browser: '', tabs: -1, linuxdoTabs: -1 }
+  try {
+    const v = JSON.parse((await get('/json/version')) || '{}')
+    out.browser = String(v.Browser || '').slice(0, 60)
+  } catch { /* 版本接口失败保持空串 */ }
+  try {
+    const tabs = JSON.parse((await get('/json/list')) || '[]')
+    const pages = tabs.filter(t => t.type === 'page')
+    out.tabs = pages.length
+    out.linuxdoTabs = pages.filter(t => String(t.url || '').includes('linux.do')).length
+  } catch { /* 列表接口失败保持 -1 */ }
+  return out
+}
+
 export async function runPrefetch(opts = {}) {
   let lastErr
   for (let attempt = 0; ; attempt++) {
@@ -186,6 +207,12 @@ export async function main(argv) {
   } catch (e) {
     const diag = (e && e.linuxdoResult && e.linuxdoResult.reason) ? e.linuxdoResult.reason : (e && e.message || e)
     process.stderr.write('linuxdo-prefetch: 失败: ' + String(diag).slice(0, 200) + '\n')
+    // 2026-11-28：失败时对 9222 做一次只读现场快照（见 probeCdpScene 注记），不改变退出码。
+    try {
+      const scene = await probeCdpScene(parsed.host)
+      process.stderr.write('linuxdo-prefetch: 9222 现场: browser=' + (scene.browser || 'n/a')
+        + ' pages=' + scene.tabs + ' linuxdo_pages=' + scene.linuxdoTabs + '\n')
+    } catch { /* 快照失败不影响失败退出码 */ }
     process.exit(1)
   }
 }
